@@ -67,6 +67,9 @@ db.serialize(() => {
     db.run(`ALTER TABLE rights ADD COLUMN kalan_ana_para REAL DEFAULT 0`, () => {});
     db.run(`ALTER TABLE rights ADD COLUMN kalan_bonus REAL DEFAULT 0`, () => {});
     db.run(`ALTER TABLE right_movements ADD COLUMN personel TEXT`, () => {});
+    db.run(`ALTER TABLE logs ADD COLUMN is_paused INTEGER DEFAULT 0`, () => {});
+    db.run(`ALTER TABLE logs ADD COLUMN paused_at TEXT`, () => {});
+    db.run(`ALTER TABLE logs ADD COLUMN total_pause_duration INTEGER DEFAULT 0`, () => {});
 
     db.all('SELECT * FROM settings', (err, rows) => {
         if (!rows || rows.length === 0) {
@@ -406,11 +409,10 @@ app.get('/api/students/get/:child_id', (req, res) => {
 
 app.post('/api/students/create', (req, res) => {
     const { cari_turu, student_name, birth_date, parent_name, parent_phone, note, start_entry, rfid_id, personel } = req.body;
-    db.get('SELECT child_id FROM students ORDER BY child_id DESC LIMIT 1', (err, row) => {
+    db.get(`SELECT CAST(REPLACE(child_id, 'UC-', '') AS INTEGER) as num FROM students ORDER BY num DESC LIMIT 1`, (err, row) => {
         let nextNum = 1;
-        if (row && row.child_id) {
-            const lastNum = parseInt(row.child_id.replace('UC-', ''), 10);
-            if (!isNaN(lastNum)) nextNum = lastNum + 1;
+        if (row && row.num) {
+            nextNum = row.num + 1;
         }
         const childId = "UC-" + String(nextNum).padStart(6, '0');
         const now = new Date().toISOString();
@@ -458,7 +460,13 @@ app.get('/api/inside', (req, res) => {
             const now = new Date();
             Promise.all((rows || []).map(r => new Promise((resolve) => {
                 const entryDate = new Date(r.entry_time);
-                const sureDk = Math.max(0, Math.floor((now - entryDate) / 60000));
+                let currentPauseDk = 0;
+                if (r.is_paused === 1 && r.paused_at) {
+                    currentPauseDk = Math.floor((now - new Date(r.paused_at)) / 60000);
+                }
+                const totalPause = (r.total_pause_duration || 0) + currentPauseDk;
+                const sureDk = Math.max(0, Math.floor((now - entryDate) / 60000) - totalPause);
+                
                 db.get(`SELECT parent_phone FROM students WHERE child_id = ?`, [r.child_id], (err, stu) => {
                     db.all(`SELECT * FROM rights WHERE child_id = ? AND durum = 'Aktif' AND kalan_dk > 0`, [r.child_id], (err, rights) => {
                         let telafiMinutes = 0; let packageMinutes = 0;
@@ -467,12 +475,36 @@ app.get('/api/inside', (req, res) => {
                             child_id: r.child_id, student_name: r.student_name, parent_name: r.parent_name, parent_phone: stu ? stu.parent_phone : '', 
                             entry_time_fmt: entryDate.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }), 
                             entry_timestamp: entryDate.getTime(), sure_dk: sureDk, estimated_fee: calculateFee(sureDk), 
-                            telafi_minutes: telafiMinutes, package_minutes: packageMinutes, warning: sureDk >= 60, alarm: sureDk >= 120 
+                            telafi_minutes: telafiMinutes, package_minutes: packageMinutes, warning: sureDk >= 60, alarm: sureDk >= 120, is_paused: r.is_paused === 1 
                         });
                     });
                 });
             }))).then(result => res.json({ success: true, children: result.sort((a, b) => b.sure_dk - a.sure_dk) }));
         });
+    });
+});
+
+
+app.post('/api/entry/pause-toggle', (req, res) => {
+    const { child_id } = req.body;
+    db.get(`SELECT * FROM logs WHERE child_id = ? AND status = 'AÇIK'`, [child_id], (err, log) => {
+        if (!log) return res.json({ success: false, message: "Kayıt bulunamadı." });
+        const now = new Date();
+        
+        if (log.is_paused === 1) {
+            let pausedDk = 0;
+            if (log.paused_at) {
+                pausedDk = Math.floor((now - new Date(log.paused_at)) / 60000);
+            }
+            const newTotalPause = (log.total_pause_duration || 0) + pausedDk;
+            db.run(`UPDATE logs SET is_paused = 0, paused_at = NULL, total_pause_duration = ? WHERE log_id = ?`, [newTotalPause, log.log_id], () => {
+                res.json({ success: true, message: "Devam ediliyor." });
+            });
+        } else {
+            db.run(`UPDATE logs SET is_paused = 1, paused_at = ? WHERE log_id = ?`, [now.toISOString(), log.log_id], () => {
+                res.json({ success: true, message: "Duraklatıldı." });
+            });
+        }
     });
 });
 
@@ -506,7 +538,13 @@ app.post('/api/entry/start', (req, res) => {
 app.get('/api/exit/preview/:child_id', (req, res) => {
     db.get(`SELECT * FROM logs WHERE child_id = ? AND status = 'AÇIK'`, [req.params.child_id], (err, log) => {
         if (!log) return res.json({ success: false, message: "Çocuk içeride görünmüyor." });
-        const sureDk = Math.max(1, Math.ceil((new Date() - new Date(log.entry_time)) / 60000));
+        const now = new Date();
+        let currentPauseDk = 0;
+        if (log.is_paused === 1 && log.paused_at) {
+            currentPauseDk = Math.floor((now - new Date(log.paused_at)) / 60000);
+        }
+        const totalPause = (log.total_pause_duration || 0) + currentPauseDk;
+        const sureDk = Math.max(1, Math.ceil((now - new Date(log.entry_time)) / 60000) - totalPause);
         
         db.all(`SELECT * FROM rights WHERE child_id = ? AND durum = 'Aktif' AND kalan_dk > 0`, [req.params.child_id], (err, rights) => {
             let telafiMinutes = 0, packageMinutes = 0;
@@ -525,7 +563,12 @@ app.post('/api/exit/finalize', (req, res) => {
         db.get(`SELECT * FROM logs WHERE child_id = ? AND status = 'AÇIK'`, [child_id], (err, log) => {
             if (!log) return res.json({ success: false, message: "Aktif giriş bulunamadı." });
             const now = new Date();
-            const sureDk = Math.max(1, Math.ceil((now - new Date(log.entry_time)) / 60000));
+            let currentPauseDk = 0;
+            if (log.is_paused === 1 && log.paused_at) {
+                currentPauseDk = Math.floor((now - new Date(log.paused_at)) / 60000);
+            }
+            const totalPause = (log.total_pause_duration || 0) + currentPauseDk;
+            const sureDk = Math.max(1, Math.ceil((now - new Date(log.entry_time)) / 60000) - totalPause);
             let fee = calculateFee(sureDk);
             let sourceSummary = "";
 
