@@ -174,8 +174,11 @@ h1 { margin:0 0 20px 0; font-size:32px; }
                     <button class="btn" style="background:#b91c1c; color:#fff;" onclick="openExitModal()">ÇIKIŞ YAP VE TAHSİLAT AL</button>
                 `;
             } else {
+                // Dışarıdaki öğrencide de döküm alınabilmeli: bu dal yalnızca "GİRİŞ BAŞLAT"
+                // gösterdiği için hareket dökümü düğmesi ekrandan kayboluyordu.
                 document.getElementById('actionArea').innerHTML = `
                     <button class="btn btn-green" onclick="startEntry()">GİRİŞ BAŞLAT</button>
+                    <button class="btn btn-gray" onclick="printStatement()">HAREKET DÖKÜMÜ YAZDIR (Giriş / Çıkış)</button>
                 `;
             }
         });
@@ -358,10 +361,13 @@ h1 { margin:0 0 20px 0; font-size:32px; }
         const rows = d.hareketler.map(h => {
             let tutar;
             if (h.iptal) tutar = 'İptal';
-            else if (h.paket_dk > 0) tutar = 'Paketten ' + stInt(h.paket_dk) + ' dk';
+            else if (h.paket_dk > 0) tutar = 'Paketten ' + stMoney(h.paket_dk);
             else if (h.nakit_tl > 0) tutar = stMoney(h.nakit_tl) + (h.puan_indirimi > 0 ? ' (−' + stMoney(h.puan_indirimi) + ' puan)' : '');
             else tutar = '—';
-            const kalan = (h.kalan_dk === null || h.kalan_dk === undefined) ? '—' : stInt(h.kalan_dk) + ' dk';
+            const kalan = (h.kalan_dk === null || h.kalan_dk === undefined) ? '—'
+                : (h.kalan_tipi === 'PAKET' ? stMoney(h.kalan_dk)
+                   : h.kalan_tipi === 'TELAFİ DERSİ' ? stInt(h.kalan_dk) + ' Saat'
+                   : stInt(h.kalan_dk) + ' dk');
             return '<tr><td>' + h.sira + '</td><td>' + stDate(h.tarih) + '</td><td>' + stTime(h.giris) + '</td>' +
                 '<td>' + stCikis(h) + '</td><td>' + stSure(h.sure_dk) + '</td><td>' + tutar + '</td><td>' + kalan + '</td></tr>';
         }).join('');
@@ -382,9 +388,9 @@ h1 { margin:0 0 20px 0; font-size:32px; }
             '<div class="st-sum">' +
             '<div><span>Ziyaret sayısı</span><b>' + stInt(d.ozet.ziyaret) + '</b></div>' +
             '<div><span>Nakit / kart tahsilatı</span><b>' + stMoney(d.ozet.nakit_tl) + '</b></div>' +
-            '<div><span>Paketten düşülen</span><b>' + stInt(d.ozet.paket_dk) + ' dk</b></div>' +
+            '<div><span>Paketten düşülen</span><b>' + stMoney(d.ozet.paket_dk) + '</b></div>' +
             (d.ozet.puan_indirimi > 0 ? '<div><span>Kullanılan puan indirimi</span><b>' + stMoney(d.ozet.puan_indirimi) + '</b></div>' : '') +
-            '<div class="big"><span>Kalan paket</span><b>' + stInt(d.kalan.paket_dk) + ' dk</b></div>' +
+            '<div class="big"><span>Kalan paket</span><b>' + stMoney(d.kalan.paket_dk) + '</b></div>' +
             '<div><span>Kalan oyun alanı telafisi</span><b>' + stInt(d.kalan.telafi_dk) + ' dk</b></div>' +
             (d.kalan.puan ? '<div><span>Cüzdan puanı</span><b>' + stInt(d.kalan.puan) + '</b></div>' : '') +
             '</div>' +

@@ -1823,6 +1823,10 @@ app.get('/api/students/statement/:child_id', async (req, res) => {
                 puan_indirimi: Number(l.puan_indirimi || 0),
                 kazanilan_puan: Number(l.kazanilan_puan || 0),
                 kalan_dk: mv ? Number(mv.yeni_kalan_dk) : null,
+                // Kalan bakiyenin birimi hakkın türüne bağlı: PAKET parasal (TL),
+                // telafi dakika, telafi dersi saat. Aksi halde "14150" gibi çıplak
+                // bir sayı anne-babaya yanlış birimle okunur.
+                kalan_tipi: mv ? mv.hak_tipi : null,
                 ozet: l.source_summary || '',
                 durum: l.status
             };
