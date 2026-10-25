@@ -1,1 +1,16 @@
+# Bağımlılıklar (kurulumda yeniden üretilir)
 node_modules/
+
+# SQLite çalışma dosyaları
+database.db-journal
+database.db-wal
+database.db-shm
+
+# Isı yazıcı geçici fişleri
+temp_slip_*.html
+
+# Otomatik Excel yedekleri
+backups/*.xlsx
+
+# NOT: database.db BİLEREK izlenmeye devam ediyor; otomatik veritabanı yedeği
+# commit'leri bu dosya üzerinden yürüyor.

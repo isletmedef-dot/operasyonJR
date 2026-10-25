@@ -40,6 +40,14 @@ h1{font-size: 32px; margin:0 0 20px 0}
       Geçen Süre: <b id="modalDuration" style="color:#000;">0dk</b><br>
       Tutar: <b id="modalFee" style="color:#b91c1c; font-size:18px;">0 TL</b>
     </div>
+
+    <div style="background:#f3f4f6; border-radius:12px; padding:12px; margin-bottom:12px; text-align:left; font-size:14px;">
+      <div>Cüzdan Bakiyesi: <b id="modalWallet">-</b> <span id="modalWalletTl" style="color:#777; font-size:12px;"></span></div>
+      <label style="display:block; margin-top:10px; font-size:13px; color:#445;">Kullanılacak Puan (indirim)</label>
+      <input type="number" min="0" value="0" id="redeemPointsInput" style="width:100%; box-sizing:border-box; padding:9px; border-radius:8px; border:1px solid #ccc;">
+      <label style="display:block; margin-top:8px; font-size:13px; color:#445;">Kazanılan Puan (verilecek)</label>
+      <input type="number" min="0" value="0" id="earnPointsInput" style="width:100%; box-sizing:border-box; padding:9px; border-radius:8px; border:1px solid #ccc;">
+    </div>
     
     <button class="btn" style="background:#15803d;" onclick="finalizeExit('NAKİT')">Nakit Alındı (<span class="feeText">0</span> TL)</button>
     <button class="btn" style="background:#1d4ed8;" onclick="finalizeExit('KREDİ KARTI')">Kart Alındı (<span class="feeText">0</span> TL)</button>
@@ -155,6 +163,19 @@ function openExitModal(childId) {
         document.getElementById('btnHak').innerText = `Telafi Kullan (${r.telafi_minutes || 0} Dk)`;
         document.getElementById('btnPaket').innerText = `Paketten Düş (${r.package_minutes || 0} TL)`;
 
+        // Cüzdan bakiyesi ve puan alanlarını her açılışta tazele
+        document.getElementById('redeemPointsInput').value = 0;
+        document.getElementById('earnPointsInput').value = 0;
+        document.getElementById('redeemPointsInput').max = 9999;
+        document.getElementById('modalWallet').innerText = '-';
+        document.getElementById('modalWalletTl').innerText = '';
+        fetch('/api/wallet/' + encodeURIComponent(childId)).then(w => w.json()).then(w => {
+            if (!w.success) return;
+            document.getElementById('modalWallet').innerText = w.wallet_balance + ' puan';
+            document.getElementById('modalWalletTl').innerText = '(' + w.tl_karsiligi + ' TL değerinde)';
+            document.getElementById('redeemPointsInput').max = w.wallet_balance;
+        }).catch(() => {});
+
         document.getElementById('exitModalBg').style.display = 'flex';
     }).catch(err => alert("Hata: " + err.message));
 }
@@ -195,12 +216,18 @@ function finalizeCancel() {
 
 function finalizeExit(paymentType) {
     const childIdToProcess = selectedChildId;
+    // Puanları modal kapanmadan önce oku
+    const kullanilanPuan = Number((document.getElementById('redeemPointsInput') || {}).value || 0);
+    const kazanilanPuan = Number((document.getElementById('earnPointsInput') || {}).value || 0);
     closeExitModal();
     
     promptPIN((personelName) => {
         fetch('/api/exit/finalize', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ child_id: childIdToProcess, payment_type: paymentType, personel: personelName })
+            body: JSON.stringify({
+                child_id: childIdToProcess, payment_type: paymentType, personel: personelName,
+                kullanilan_puan: kullanilanPuan, kazanilan_puan: kazanilanPuan
+            })
         }).then(res => res.json()).then(r => {
             alert(r.message);
             if (r.success) loadInside();

@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Öğretmen Ekranı</title>
+<style>
+body{font-family:-apple-system, Arial, sans-serif; background:#f4f4f4; margin:0; padding:16px; color:#111; -webkit-text-size-adjust:100%}
+.wrap{max-width:720px; margin:auto}
+h1{font-size:22px; margin:0}
+h3{margin:0 0 10px 0; font-size:16px}
+.card{background:#fff; border-radius:14px; padding:16px; box-shadow:0 2px 8px rgba(0,0,0,.05); margin-bottom:14px}
+label{display:block; font-size:13px; color:#445; margin-top:10px}
+input,select{width:100%; box-sizing:border-box; padding:12px; border-radius:12px; border:1px solid #ccc; font-size:16px; background:#fff}
+button{border:none; border-radius:12px; padding:14px; font-weight:bold; color:#fff; cursor:pointer; font-size:15px; margin-top:10px; background:#1d4ed8; width:100%}
+button.green{background:#15803d} button.gray{background:#6b7280} button.sm{padding:8px 12px; margin:0; font-size:13px; width:auto; border-radius:9px}
+button.red{background:#b91c1c}
+.pick{background:#f9fafb; padding:14px; border-radius:12px; cursor:pointer; margin-top:8px; font-size:15px; font-weight:bold; display:flex; justify-content:space-between; align-items:center}
+.pick:active{background:#eef2ff}
+.sub{font-size:12px; color:#777; font-weight:normal}
+.chip{display:inline-block; background:#eef2ff; color:#1d4ed8; border-radius:20px; padding:3px 10px; font-size:12px; font-weight:bold}
+.chip.ok{background:#dcfce7; color:#15803d}
+.task{display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 0; border-bottom:1px solid #eee}
+.task.done{opacity:.65}
+.big{font-size:24px; font-weight:bold}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+    <h1>Öğretmen Ekranı</h1>
+    <a href="/home.html" style="background:#111; color:#fff; padding:8px 14px; border-radius:8px; text-decoration:none; font-weight:bold; font-size:13px;">Ana Menü</a>
+  </div>
+
+  <!-- GİRİŞ -->
+  <div class="card" id="loginCard">
+    <h3>Personel Girişi</h3>
+    <p class="sub">Pasaport görevlerini işaretlemek için 4 haneli PIN girin.</p>
+    <label>PIN</label>
+    <input type="tel" id="pinInput" maxlength="4" autocomplete="off" style="-webkit-text-security: disc; font-size:26px; text-align:center; letter-spacing:10px;">
+    <button class="green" onclick="login()">GİRİŞ</button>
+    <div class="sub" id="loginMsg" style="margin-top:8px;"></div>
+  </div>
+
+  <!-- UYGULAMA -->
+  <div id="app" style="display:none;">
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>Personel: <b id="whoami">-</b></div>
+        <button class="gray sm" onclick="logout()">ÇIKIŞ</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Öğrenci Ara</h3>
+      <input id="searchInput" placeholder="İsim yazın..." autocomplete="off" onkeyup="search(this.value)">
+      <div id="searchResults"></div>
+    </div>
+
+    <div class="card">
+      <h3>Bugünün Dersleri</h3>
+      <div id="todayArea" class="sub">Yükleniyor...</div>
+    </div>
+
+    <div class="card" id="passportCard" style="display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+        <div>
+          <h3 id="pName" style="margin-bottom:4px;">-</h3>
+          <div class="sub" id="pMeta"></div>
+        </div>
+        <div style="text-align:right;">
+          <div class="big" id="pWallet" style="color:#15803d;">0</div>
+          <div class="sub">puan</div>
+        </div>
+      </div>
+      <div style="margin-top:12px;" id="pTasks"></div>
+      <button class="gray" onclick="closePassport()">KAPAT</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let personel = sessionStorage.getItem('personel') || null;
+let currentChild = null;
+
+function api(path, body) {
+    const opt = body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {};
+    return fetch(path, opt).then(r => r.json());
+}
+
+function login() {
+    const pin = document.getElementById('pinInput').value;
+    if (!pin || pin.length !== 4) return alert('4 haneli PIN giriniz.');
+    api('/api/staff/verify', { pin }).then(r => {
+        if (!r.success) { document.getElementById('loginMsg').innerText = r.message; return; }
+        personel = r.name;
+        sessionStorage.setItem('personel', personel);
+        startApp();
+    });
+}
+
+function logout() {
+    sessionStorage.removeItem('personel');
+    personel = null;
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('loginCard').style.display = 'block';
+}
+
+function startApp() {
+    document.getElementById('loginCard').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    document.getElementById('whoami').innerText = personel;
+    loadToday();
+}
+
+function loadToday() {
+    api('/api/classes/today').then(data => {
+        const area = document.getElementById('todayArea');
+        if (!data.success) { area.innerText = 'Yüklenemedi.'; return; }
+        if (!data.sessions.length) { area.innerText = 'Bugün (' + (data.gun_adi || '') + ') ders yok.'; return; }
+        area.innerHTML = data.sessions.map(s => `
+            <div class="pick" onclick="openSessionStudents('${s.session_id}')">
+              <span>${s.class_name} <span class="sub">${s.start_time}-${s.end_time}</span></span>
+              <span class="chip">${s.ogrenciler.length} öğr.</span>
+            </div>`).join('');
+    });
+}
+
+function openSessionStudents(sessionId) {
+    api('/api/classes/today').then(data => {
+        const s = (data.sessions || []).find(x => x.session_id === sessionId);
+        if (!s) return;
+        document.getElementById('passportCard').style.display = 'block';
+        document.getElementById('pName').innerText = s.class_name + ' · ' + s.start_time + '-' + s.end_time;
+        document.getElementById('pMeta').innerText = 'Görev işaretlemek için öğrenci seçin.';
+        document.getElementById('pWallet').innerText = '';
+        document.getElementById('pTasks').innerHTML = s.ogrenciler.length ? s.ogrenciler.map(o => `
+            <div class="pick" onclick="openPassport('${o.child_id}')">
+              <span>${o.student_name} ${o.yoklama === 'GELDİ' ? '<span class="chip ok">GELDİ</span>' : (o.yoklama === 'GELMEDİ' ? '<span class="chip" style="background:#fee2e2;color:#b91c1c;">GELMEDİ</span>' : '')}</span>
+              <span class="sub">pasaport →</span>
+            </div>`).join('') : '<div class="sub">Bu saatte kayıtlı öğrenci yok.</div>';
+        document.getElementById('passportCard').scrollIntoView({ behavior: 'smooth' });
+    });
+}
+
+function search(q) {
+    const area = document.getElementById('searchResults');
+    if (!q || q.trim().length < 2) { area.innerHTML = ''; return; }
+    api('/api/students/search?q=' + encodeURIComponent(q)).then(data => {
+        if (!data.success) return;
+        area.innerHTML = (data.students || []).map(s => `
+            <div class="pick" onclick="openPassport('${s.child_id}')">
+              <span>${s.student_name}</span><span class="sub">${s.child_id}</span>
+            </div>`).join('') || '<div class="sub" style="margin-top:8px;">Sonuç yok.</div>';
+    });
+}
+
+function openPassport(childId) {
+    currentChild = childId;
+    api('/api/passport/' + encodeURIComponent(childId)).then(data => {
+        if (!data.success) return alert(data.message);
+        document.getElementById('passportCard').style.display = 'block';
+        document.getElementById('pName').innerText = data.student.student_name;
+        document.getElementById('pMeta').innerText = data.student.child_id + ' · ' + (data.student.parent_phone || '') + ' · toplam ' + data.toplam_puan + ' puan kazandı';
+        document.getElementById('pWallet').innerText = data.student.wallet_balance;
+        document.getElementById('pTasks').innerHTML = data.tasks.map(t => `
+            <div class="task ${t.tamamlandi ? 'done' : ''}">
+              <div><b>${t.name}</b><div class="sub">${t.points} puan${t.tamamlandi ? ' · ' + (t.yapan || '') : ''}</div></div>
+              ${t.tamamlandi
+                ? `<button class="gray sm" onclick="uncomplete('${t.task_id}')">GERİ AL</button>`
+                : `<button class="green sm" onclick="complete('${t.task_id}')">İŞARETLE</button>`}
+            </div>`).join('') || '<div class="sub">Tanımlı görev yok.</div>';
+        document.getElementById('passportCard').scrollIntoView({ behavior: 'smooth' });
+    });
+}
+
+function closePassport() {
+    document.getElementById('passportCard').style.display = 'none';
+    currentChild = null;
+}
+
+function complete(taskId) {
+    api('/api/tasks/complete', { child_id: currentChild, task_id: taskId, personel })
+        .then(r => { if (!r.success) alert(r.message); openPassport(currentChild); });
+}
+
+function uncomplete(taskId) {
+    api('/api/tasks/uncomplete', { child_id: currentChild, task_id: taskId, personel })
+        .then(r => { if (!r.success) alert(r.message); openPassport(currentChild); });
+}
+
+document.getElementById('pinInput').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); login(); } });
+
+if (personel) startApp();
+</script>
+</body>
+</html>

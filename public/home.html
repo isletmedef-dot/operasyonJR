@@ -35,6 +35,8 @@ body{font-family:Arial, sans-serif; background:#f4f4f4;margin:0; padding: 24px;c
     
     <a class="btn" href="#" onclick="openRightsWithPin(event)">Hak & Paket Yönetimi<small>Telafi tanımla, paket sat</small></a>
     <a class="btn" href="#" onclick="openReports(event)">Raporlar<small>Gün sonu ve Excel Dışa Aktarım</small></a>
+    <a class="btn" href="/classes.html">Ders Kaydı<small>Kurs kaydı, aylık/dönemlik ödeme, yoklama</small></a>
+    <a class="btn" href="/teacher.html">Öğretmen Ekranı<small>Pasaport görevleri ve puan verme</small></a>
     <button class="btn" onclick="openAdminWithPin()" style="background:#e0f2fe; border:2px solid #bae6fd; text-align:left;">Yönetim Paneli<small>Fiyat, Personel, Süre ayarları</small></button>
   </div>
 </div>
@@ -48,6 +50,7 @@ body{font-family:Arial, sans-serif; background:#f4f4f4;margin:0; padding: 24px;c
       <button id="tabStaffBtn" class="tab-btn" onclick="switchAdminTab('staff')">Personel</button>
       <button id="tabStudentsBtn" class="tab-btn" onclick="switchAdminTab('students')">Öğrenci Düzenle</button>
       <button id="tabBonusBtn" class="tab-btn" onclick="switchAdminTab('bonus')">Bonus Paketler</button>
+      <button id="tabLeaderboardBtn" class="tab-btn" onclick="switchAdminTab('leaderboard')">Haftanın Kaşifleri</button>
     </div>
     
     <div id="adminSettings" class="admin-form">
@@ -63,6 +66,13 @@ body{font-family:Arial, sans-serif; background:#f4f4f4;margin:0; padding: 24px;c
       <input type="number" id="packageExpiryDaysInput" value="30">
       <label>Çıkış Toleransı (Dakika)</label>
       <input type="number" id="exitToleranceInput" value="5">
+      <label>Puan Değeri (1 puan kaç TL indirim)</label>
+      <input type="number" step="0.01" min="0" id="pointTlRateInput" value="1">
+      <label>Ders Gelmemesi Telafisi (dakika)</label>
+      <input type="number" min="1" id="oyunAlaniSeansInput" value="60">
+      <label>Ders Yoklama Toleransı (dakika: önce / sonra)</label>
+      <input type="number" min="0" id="classEarlyInput" value="15">
+      <input type="number" min="0" id="classLateInput" value="15">
       
       <div style="background:#eff6ff; padding:15px; border-radius:10px; margin-top:15px; margin-bottom:15px; border: 1px solid #bfdbfe;">
         <h4 style="margin:0 0 10px 0; color:#1e3a8a;">Telegram Bildirim Ayarları</h4>
@@ -72,6 +82,36 @@ body{font-family:Arial, sans-serif; background:#f4f4f4;margin:0; padding: 24px;c
         <input type="text" id="telegramChatIdInput" placeholder="Örn: 123456789" autocomplete="off">
       </div>
       
+      <div style="background:#f0fdf4; padding:15px; border-radius:10px; margin-top:15px; margin-bottom:15px; border: 1px solid #bbf7d0;">
+        <h4 style="margin:0 0 10px 0; color:#166534;">Sınıf Arayüzü ve Google E-Tablo</h4>
+
+        <label style="margin-top:0;">Sınıf Tableti Portu</label>
+        <input type="number" min="1" id="classroomPortInput" value="3001">
+        <label>Okuyucu Anahtarı (boş = serbest)</label>
+        <input type="text" id="readerTokenInput" placeholder="Sınıf tabletine bir kez yazılır" autocomplete="off">
+
+        <label>Google E-Tablo Bağlantısı</label>
+        <input type="text" id="sheetsUrlInput" placeholder="https://docs.google.com/spreadsheets/d/.../edit" autocomplete="off">
+        <label>Sheets API Anahtarı (isteğe bağlı, gerekmez)</label>
+        <input type="text" id="sheetsApiKeyInput" placeholder="Boş bırakılabilir" autocomplete="off">
+
+        <label>Eşitleme Aralığı (dakika)</label>
+        <input type="number" min="1" id="sheetsSyncInput" value="5">
+        <label style="display:block; margin-top:8px;"><input type="checkbox" id="sheetsEnabledInput" style="width:auto; margin-right:8px;"> Otomatik eşitleme açık</label>
+
+        <label>Sekme Adları</label>
+        <input type="text" id="sheetTabDerslerInput" value="Dersler" style="width:32%; display:inline-block;">
+        <input type="text" id="sheetTabProgramInput" value="Program" style="width:32%; display:inline-block;">
+        <input type="text" id="sheetTabKayitlarInput" value="Kayitlar" style="width:32%; display:inline-block;">
+
+        <div id="sheetsStatus" style="margin-top:12px; font-size:13px; color:#334155;">Yükleniyor…</div>
+        <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+          <button class="action-btn" style="width:auto; padding:10px 14px; margin:0; background:#0f766e;" onclick="previewSheets()">ÖNİZLEME</button>
+          <button class="action-btn btn-green" style="width:auto; padding:10px 14px; margin:0;" onclick="syncSheetsNow()">ŞİMDİ EŞİTLE</button>
+        </div>
+        <div style="margin-top:10px; font-size:13px;">Sınıf ekranı: <a id="classroomLink" href="#" target="_blank" style="color:#166534; font-weight:bold;">tableti bu adresten açın</a></div>
+      </div>
+
       <button class="action-btn btn-green" onclick="saveSettings()">AYARLARI KAYDET</button>
     </div>
     
@@ -123,6 +163,12 @@ body{font-family:Arial, sans-serif; background:#f4f4f4;margin:0; padding: 24px;c
        </div>
        <h4 style="margin:0 0 10px 0;">Kayıtlı Bonus Paketler</h4>
        <div id="bonusListArea"></div>
+    </div>
+
+    <div id="adminLeaderboard" class="admin-form" style="display:none;">
+      <h4 style="margin:0 0 5px 0;">Haftanın Kaşifleri</h4>
+      <p style="font-size:13px; color:#666; margin-top:0;">Bu hafta (Pazartesi'den itibaren) en çok puan toplayan öğrenciler.</p>
+      <div id="leaderboardArea"></div>
     </div>
     <button class="action-btn btn-gray" onclick="closeAdmin()">Kapat</button>
   </div>
@@ -240,6 +286,14 @@ function openAdmin() {
       document.getElementById('exitToleranceInput').value = r.settings.exit_tolerance_minutes ?? 5;
       document.getElementById('telegramTokenInput').value = r.settings.telegram_token || '';
       document.getElementById('telegramChatIdInput').value = r.settings.telegram_chat_id || '';
+      document.getElementById('pointTlRateInput').value = r.settings.point_tl_rate ?? 1;
+      document.getElementById('oyunAlaniSeansInput').value = r.settings.oyun_alani_seans_dk ?? 60;
+      document.getElementById('classEarlyInput').value = r.settings.class_early_minutes ?? 15;
+      document.getElementById('classLateInput').value = r.settings.class_late_minutes ?? 15;
+      document.getElementById('classroomPortInput').value = r.settings.classroom_port ?? 3001;
+      document.getElementById('readerTokenInput').value = r.settings.classroom_reader_token || '';
+      document.getElementById('sheetsApiKeyInput').value = r.settings.sheets_api_key || '';
+      loadSheetsStatus();
     }
   });
   loadStaff();
@@ -257,6 +311,25 @@ function switchAdminTab(tab) {
   document.getElementById('tabStaffBtn').className = tab === 'staff' ? 'tab-btn active' : 'tab-btn';
   document.getElementById('tabStudentsBtn').className = tab === 'students' ? 'tab-btn active' : 'tab-btn';
   document.getElementById('tabBonusBtn').className = tab === 'bonus' ? 'tab-btn active' : 'tab-btn';
+  document.getElementById('adminLeaderboard').style.display = tab === 'leaderboard' ? 'block' : 'none';
+  document.getElementById('tabLeaderboardBtn').className = tab === 'leaderboard' ? 'tab-btn active' : 'tab-btn';
+  if (tab === 'leaderboard') loadLeaderboard();
+}
+
+function loadLeaderboard() {
+  fetch('/api/leaderboard/weekly').then(r => r.json()).then(data => {
+    const area = document.getElementById('leaderboardArea');
+    if (!data.success) { area.innerHTML = '<p style="color:#b91c1c;">Yüklenemedi.</p>'; return; }
+    if (!data.leaderboard.length) {
+      area.innerHTML = '<p style="color:#777; font-size:14px;">Bu hafta henüz puan kazanılmamış.</p>';
+      return;
+    }
+    const medal = ['🥇', '🥈', '🥉'];
+    area.innerHTML = data.leaderboard.map((s, i) =>
+      '<div class="staff-item"><b>' + (medal[i] || (i + 1) + '.') + ' ' + s.student_name +
+      '</b><span style="color:#15803d; font-weight:bold;">' + s.toplam_puan + ' puan</span></div>'
+    ).join('');
+  }).catch(() => {});
 }
 
 function saveSettings() {
@@ -270,9 +343,84 @@ function saveSettings() {
         package_expiry_days: document.getElementById('packageExpiryDaysInput').value,
         exit_tolerance_minutes: document.getElementById('exitToleranceInput').value,
         telegram_token: document.getElementById('telegramTokenInput').value,
-        telegram_chat_id: document.getElementById('telegramChatIdInput').value
+        telegram_chat_id: document.getElementById('telegramChatIdInput').value,
+        point_tl_rate: document.getElementById('pointTlRateInput').value,
+        oyun_alani_seans_dk: document.getElementById('oyunAlaniSeansInput').value,
+        class_early_minutes: document.getElementById('classEarlyInput').value,
+        class_late_minutes: document.getElementById('classLateInput').value,
+        classroom_port: document.getElementById('classroomPortInput').value,
+        classroom_reader_token: document.getElementById('readerTokenInput').value,
+        sheets_url: document.getElementById('sheetsUrlInput').value,
+        sheets_api_key: document.getElementById('sheetsApiKeyInput').value,
+        sheets_sync_minutes: document.getElementById('sheetsSyncInput').value,
+        sheets_enabled: document.getElementById('sheetsEnabledInput').checked ? 1 : 0,
+        sheets_tab_dersler: document.getElementById('sheetTabDerslerInput').value,
+        sheets_tab_program: document.getElementById('sheetTabProgramInput').value,
+        sheets_tab_kayitlar: document.getElementById('sheetTabKayitlarInput').value
     })
-  }).then(res=>res.json()).then(r => alert(r.message));
+  }).then(res=>res.json()).then(r => { alert(r.message); loadSheetsStatus(); });
+}
+
+function loadSheetsStatus() {
+  fetch('/api/sheets/status').then(r=>r.json()).then(s => {
+    if (!s.success) return;
+    document.getElementById('sheetsUrlInput').value = s.url || '';
+    document.getElementById('sheetsSyncInput').value = s.sync_minutes || 5;
+    document.getElementById('sheetsEnabledInput').checked = !!s.enabled;
+    if (s.tabs) {
+      document.getElementById('sheetTabDerslerInput').value = s.tabs.dersler;
+      document.getElementById('sheetTabProgramInput').value = s.tabs.program;
+      document.getElementById('sheetTabKayitlarInput').value = s.tabs.kayitlar;
+    }
+    const link = document.getElementById('classroomLink');
+    link.href = location.protocol + '//' + location.hostname + ':' + (s.classroom_port || 3001);
+    link.textContent = link.href;
+
+    const rows = (s.son_esitlemeler || []).slice(0,3).map(x =>
+      '· ' + new Date(x.tarih).toLocaleString('tr-TR') + ' — ' + x.durum + ' · ' +
+      x.ders + ' ders / ' + x.seans + ' seans / ' + x.kayit + ' kayıt' +
+      (x.hata ? ' · <b style="color:#b91c1c;">' + x.hata + ' satır hatası</b>' : '') +
+      (x.atlanan ? ' · ' + x.atlanan + ' atlandı' : '')).join('<br>');
+    document.getElementById('sheetsStatus').innerHTML =
+      (s.last_sync ? '<div>Son eşitleme: <b>' + new Date(s.last_sync).toLocaleString('tr-TR') + '</b></div>' : '<div>Henüz eşitlenmedi.</div>') +
+      (s.last_status ? '<div>Durum: ' + s.last_status + '</div>' : '') +
+      (rows ? '<div style="margin-top:6px;">' + rows + '</div>' : '');
+  }).catch(()=>{});
+}
+
+function previewSheets() {
+  const box = document.getElementById('sheetsStatus');
+  box.innerHTML = 'Önizleme alınıyor…';
+  fetch('/api/sheets/preview', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' })
+    .then(r=>r.json()).then(out => {
+      if (!out.success) { box.innerHTML = '<b style="color:#b91c1c;">' + (out.message||'Hata') + '</b>'; return; }
+      const d = out.degisiklik || {};
+      let html = '<b>Önizleme</b> — hiçbir şey kaydedilmedi.<br>' +
+        'E-tablo okundu (' + out.kaynak + '): ' + out.ozet.ders + ' ders / ' + out.ozet.seans + ' seans / ' + out.ozet.kayit + ' kayıt<br>' +
+        '+ ' + (d.ders_eklenen+d.seans_eklenen+d.kayit_eklenen) + ' yeni · ~ ' +
+        (d.ders_guncellenen+d.seans_guncellenen+d.kayit_guncellenen) + ' güncelleme · − ' +
+        (d.ders_pasif+d.seans_pasif+d.kayit_pasif) + ' pasif' +
+        (d.atlanan ? ' · ' + d.atlanan + ' atlandı' : '');
+      if (out.hatalar && out.hatalar.length) {
+        html += '<div style="margin-top:8px; color:#b91c1c;"><b>' + out.hatalar.length + ' satır hatası:</b><br>' +
+          out.hatalar.slice(0,12).map(e => '· ' + e.sekme + ' satır ' + e.satir + ': ' + e.mesaj).join('<br>') + '</div>';
+      }
+      if (out.uyarilar && out.uyarilar.length) {
+        html += '<div style="margin-top:8px; color:#b45309;"><b>' + out.uyarilar.length + ' uyarı:</b><br>' +
+          out.uyarilar.slice(0,8).map(e => '· ' + e.mesaj).join('<br>') + '</div>';
+      }
+      box.innerHTML = html;
+    }).catch(e => { box.innerHTML = 'Hata: ' + e.message; });
+}
+
+function syncSheetsNow() {
+  const box = document.getElementById('sheetsStatus');
+  box.innerHTML = 'Eşitleniyor…';
+  fetch('/api/sheets/sync', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' })
+    .then(r=>r.json()).then(out => {
+      if (!out.success) { box.innerHTML = '<b style="color:#b91c1c;">' + (out.message||'Hata') + '</b>'; return; }
+      loadSheetsStatus();
+    }).catch(e => { box.innerHTML = 'Hata: ' + e.message; });
 }
 
 

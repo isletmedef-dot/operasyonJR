@@ -4,7 +4,10 @@
   "description": "Üreten Çocuk Yerel Operasyon Yazılımı",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "jest",
+    "test:unit": "jest tests/unit",
+    "test:integration": "jest tests/integration"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -16,5 +19,9 @@
     "pdf-to-printer": "^5.8.1",
     "sqlite3": "^5.1.7",
     "thermal-printer": "^1.0.5"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.3.1"
   }
 }

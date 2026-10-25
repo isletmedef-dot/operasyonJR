@@ -19,11 +19,36 @@ h1 { margin:0 0 20px 0; font-size:32px; }
 .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items:center; justify-content:center; z-index:99; }
 .modal { background: #fff; border-radius: 22px; padding: 24px; max-width: 320px; width:100%; box-sizing:border-box; text-align:center;}
 
-#printArea { display: none; }
+#printArea, #statementArea { display: none; }
+
+/* Hareket dökümü (ekstre) biçimi: sade, okunur, yalnızca gerekli alanlar. */
+#statementArea { font-family: Arial, sans-serif; color: #000; }
+.st-h { text-align:center; border-bottom:2px solid #000; padding-bottom:8px; margin-bottom:12px; }
+.st-h b { font-size:19px; letter-spacing:1px; }
+.st-h span { display:block; font-size:13px; margin-top:3px; }
+.st-info { width:100%; font-size:13px; margin-bottom:14px; }
+.st-info td { padding:2px 0; vertical-align:top; }
+.st-info td:first-child { width:130px; color:#444; }
+.st-table { width:100%; border-collapse:collapse; font-size:12px; }
+.st-table th { text-align:left; border-bottom:1.5px solid #000; padding:5px 4px; font-size:10px; letter-spacing:.4px; }
+.st-table td { padding:5px 4px; border-bottom:1px solid #ddd; }
+.st-table tr:nth-child(even) td { background:#f7f7f7; }
+.st-sum { margin-top:14px; border-top:2px solid #000; padding-top:8px; font-size:13px; }
+.st-sum div { display:flex; justify-content:space-between; padding:2px 0; }
+.st-sum .big b { font-size:15px; }
+.st-foot { margin-top:14px; font-size:11px; color:#555; text-align:center; }
+.st-empty { text-align:center; color:#555; padding:12px 0; }
+
 @media print {
     body * { visibility: hidden; }
+    /* 1) Anlık durum / giriş-çıkış fişi (varsayılan) */
     #printArea, #printArea * { visibility: visible; }
     #printArea { display: block !important; position: absolute; left: 0; top: 0; width: 100%; font-family: Arial, sans-serif; font-size: 13px; color: #000; padding: 10px; }
+    /* 2) Hareket dökümü: body.stmt varken yalnızca ekstre yazdırılır */
+    body.stmt #printArea { display: none !important; }
+    body.stmt #statementArea, body.stmt #statementArea * { visibility: visible; }
+    body.stmt #statementArea { display: block !important; position: absolute; left: 0; top: 0; width: 100%; padding: 4px; }
+    @page { margin: 14mm; }
 }
 </style>
 </head>
@@ -49,10 +74,12 @@ h1 { margin:0 0 20px 0; font-size:32px; }
     <div id="actionArea">
         <button class="btn btn-green" id="btnStart" onclick="startEntry()">GİRİŞ BAŞLAT</button>
         <button class="btn btn-blue" onclick="printActiveStatus()">ÖĞRENCİ ANLIK DURUMUNU YAZDIR</button>
+        <button class="btn btn-gray" onclick="printStatement()">HAREKET DÖKÜMÜ YAZDIR (Giriş / Çıkış)</button>
     </div>
 </div>
 
 <div id="printArea"></div>
+<div id="statementArea"></div>
 
 <!-- ÇIKIŞ İŞLEM MODALI -->
 <div class="modal-bg" id="exitModalBg" style="z-index:90;">
@@ -143,6 +170,7 @@ h1 { margin:0 0 20px 0; font-size:32px; }
                       ⚠️ Öğrenci şu an içeride! (Giriş: ${st.entry_time})
                     </div>
                     <button class="btn btn-blue" onclick="printActiveStatus()">ÖĞRENCİ ANLIK DURUMUNU YAZDIR</button>
+                    <button class="btn btn-gray" onclick="printStatement()">HAREKET DÖKÜMÜ YAZDIR (Giriş / Çıkış)</button>
                     <button class="btn" style="background:#b91c1c; color:#fff;" onclick="openExitModal()">ÇIKIŞ YAP VE TAHSİLAT AL</button>
                 `;
             } else {
@@ -268,6 +296,99 @@ h1 { margin:0 0 20px 0; font-size:32px; }
         `;
         document.getElementById('printArea').innerHTML = content;
         window.print();
+    }
+
+    // ---- Hareket dökümü (ekstre) ----
+    // Tarayıcıdan yazdırılır: termal fiş yerine okunur bir A4 dökümü üretir.
+    function printStatement() {
+        fetch('/api/students/statement/' + encodeURIComponent(childId))
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) { alert(data.message || 'Döküm alınamadı.'); return; }
+                document.getElementById('statementArea').innerHTML = statementHtml(data);
+                document.body.classList.add('stmt');
+                const cleanup = () => { document.body.classList.remove('stmt'); window.removeEventListener('afterprint', cleanup); };
+                window.addEventListener('afterprint', cleanup);
+                window.print();
+                setTimeout(cleanup, 2000);   // afterprint desteklenmezse düğme takılı kalmasın
+            })
+            .catch(e => alert('Döküm alınamadı: ' + e.message));
+    }
+
+    function stEsc(v) {
+        return String(v == null ? '' : v).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[s]));
+    }
+    function stDate(t) {
+        if (!t) return '-';
+        const d = new Date(t);
+        return isNaN(d) ? '-' : d.toLocaleDateString('tr-TR');
+    }
+    function stTime(t) {
+        if (!t) return '-';
+        const d = new Date(t);
+        return isNaN(d) ? '-' : d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+    }
+    function stMoney(v) {
+        return Number(v || 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 }) + ' TL';
+    }
+    function stInt(v) {
+        return Number(v || 0).toLocaleString('tr-TR');
+    }
+    // Uzun süreler saat olarak yazılır (eski kayıtlarda gün mertebesinde süreler olabiliyor).
+    function stSure(v) {
+        const m = Number(v || 0);
+        if (m >= 120) {
+            const sa = Math.floor(m / 60), dk = m % 60;
+            return sa + ' sa' + (dk ? ' ' + dk + ' dk' : '');
+        }
+        return m + ' dk';
+    }
+
+    // Çıkış gün değiştirdiyse işaretlenir: "16:54 -> 14:12" tek başına geriye akıyor gibi görünür.
+    function stCikis(h) {
+        if (!h.cikis) return '-';
+        const a = new Date(h.giris), b = new Date(h.cikis);
+        if (isNaN(a) || isNaN(b)) return '-';
+        const saat = b.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+        const gunFarki = Math.round((new Date(b.getFullYear(), b.getMonth(), b.getDate()) - new Date(a.getFullYear(), a.getMonth(), a.getDate())) / 86400000);
+        return saat + (gunFarki > 0 ? ' (+' + gunFarki + ' gün)' : '');
+    }
+
+    function statementHtml(d) {
+        const rows = d.hareketler.map(h => {
+            let tutar;
+            if (h.iptal) tutar = 'İptal';
+            else if (h.paket_dk > 0) tutar = 'Paketten ' + stInt(h.paket_dk) + ' dk';
+            else if (h.nakit_tl > 0) tutar = stMoney(h.nakit_tl) + (h.puan_indirimi > 0 ? ' (−' + stMoney(h.puan_indirimi) + ' puan)' : '');
+            else tutar = '—';
+            const kalan = (h.kalan_dk === null || h.kalan_dk === undefined) ? '—' : stInt(h.kalan_dk) + ' dk';
+            return '<tr><td>' + h.sira + '</td><td>' + stDate(h.tarih) + '</td><td>' + stTime(h.giris) + '</td>' +
+                '<td>' + stCikis(h) + '</td><td>' + stSure(h.sure_dk) + '</td><td>' + tutar + '</td><td>' + kalan + '</td></tr>';
+        }).join('');
+
+        return '' +
+            '<div class="st-h"><b>ÜRETEN ÇOCUK</b><span>Hareket Dökümü (Giriş / Çıkış)</span></div>' +
+            '<table class="st-info">' +
+            '<tr><td>Öğrenci</td><td><b>' + stEsc(d.ogrenci.student_name) + '</b> (' + stEsc(d.ogrenci.child_id) + ')</td></tr>' +
+            '<tr><td>Veli</td><td>' + stEsc(d.ogrenci.parent_name || '-') + ' &middot; ' + stEsc(d.ogrenci.parent_phone || '-') + '</td></tr>' +
+            '<tr><td>Döküm tarihi</td><td>' + new Date().toLocaleString('tr-TR') + '</td></tr>' +
+            '<tr><td>Kapsam</td><td>' + (d.ozet.ilk_tarih ? stDate(d.ozet.ilk_tarih) + ' – ' + stDate(d.ozet.son_tarih) : '-') + '</td></tr>' +
+            '</table>' +
+            '<table class="st-table"><thead><tr>' +
+            '<th>#</th><th>Tarih</th><th>Giriş</th><th>Çıkış</th><th>Süre</th><th>Tutar</th><th>Kalan Bakiye</th>' +
+            '</tr></thead><tbody>' +
+            (rows || '<tr><td colspan="7" class="st-empty">Bu öğrenci için hareket kaydı bulunmuyor.</td></tr>') +
+            '</tbody></table>' +
+            '<div class="st-sum">' +
+            '<div><span>Ziyaret sayısı</span><b>' + stInt(d.ozet.ziyaret) + '</b></div>' +
+            '<div><span>Nakit / kart tahsilatı</span><b>' + stMoney(d.ozet.nakit_tl) + '</b></div>' +
+            '<div><span>Paketten düşülen</span><b>' + stInt(d.ozet.paket_dk) + ' dk</b></div>' +
+            (d.ozet.puan_indirimi > 0 ? '<div><span>Kullanılan puan indirimi</span><b>' + stMoney(d.ozet.puan_indirimi) + '</b></div>' : '') +
+            '<div class="big"><span>Kalan paket</span><b>' + stInt(d.kalan.paket_dk) + ' dk</b></div>' +
+            '<div><span>Kalan oyun alanı telafisi</span><b>' + stInt(d.kalan.telafi_dk) + ' dk</b></div>' +
+            (d.kalan.puan ? '<div><span>Cüzdan puanı</span><b>' + stInt(d.kalan.puan) + '</b></div>' : '') +
+            '</div>' +
+            '<div class="st-foot">Bu belge bilgilendirme amaçlıdır &middot; Üreten Çocuk</div>';
     }
 
     function executeDualPrint(actionName, personel) {

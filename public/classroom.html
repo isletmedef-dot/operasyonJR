@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sınıf Ekranı</title>
+<style>
+    /* Kasiyer ekranlarıyla aynı tasarım dili (kayıt ekranı temel alındı). */
+    body{font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:20px;color:#111;-webkit-user-select:none;user-select:none}
+    .wrap{max-width:720px;margin:auto}
+    .card{background:#fff;border-radius:22px;padding:24px;margin-bottom:14px;box-shadow:0 4px 10px rgba(0,0,0,0.05)}
+    h1{margin:0 0 4px;font-size:30px}
+    .sub{color:#666;font-size:14px}
+    h3{margin:0 0 14px;font-size:17px;color:#333}
+    label{display:block;font-weight:bold;margin-bottom:6px;color:#444}
+    input,select{width:100%;box-sizing:border-box;padding:14px;border:1px solid #ccc;border-radius:10px;font-size:16px;background:#fff}
+    .btn{display:block;width:100%;padding:15px;border:0;border-radius:14px;background:#111;color:#fff;font-size:16px;font-weight:bold;cursor:pointer;box-sizing:border-box;margin-bottom:10px}
+    .btn:last-child{margin-bottom:0}
+    .btn-green{background:#15803d}.btn-blue{background:#1d4ed8}.btn-gray{background:#4b5563}.btn-red{background:#b91c1c}
+    .btn-sm{display:inline-block;width:auto;padding:9px 14px;border-radius:10px;font-size:14px;margin:0}
+    .row{display:flex;gap:10px}
+    .row .btn{margin-bottom:0}
+    .tabs{display:flex;gap:8px;margin-bottom:14px}
+    .tabs button{flex:1;padding:14px 8px;border-radius:14px;border:1px solid #ccc;background:#fff;color:#333;font-size:15px;font-weight:bold;cursor:pointer}
+    .tabs button.active{background:#111;color:#fff;border-color:#111}
+    .panel{display:none}.panel.active{display:block}
+    .item{border-bottom:1px solid #eee;padding:12px 0;display:flex;justify-content:space-between;align-items:center;gap:10px}
+    .item:last-child{border-bottom:none}
+    .info b{font-size:17px}
+    .info small{display:block;color:#666;margin-top:3px;font-size:13px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+    .pill{display:inline-block;background:#f3f4f6;border-radius:12px;padding:4px 10px;font-size:12px;color:#374151;font-weight:bold;margin:2px 4px 2px 0}
+    .pill.done{background:#dcfce7;color:#15803d}
+    .pill.absent{background:#fee2e2;color:#b91c1c}
+    .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:99;padding:16px}
+    .modal-bg.show{display:flex}
+    .modal{background:#fff;border-radius:22px;padding:24px;max-width:420px;width:100%;box-sizing:border-box;text-align:center}
+    .hint{color:#666;font-size:13px;margin:6px 0 0}
+    .big-name{font-size:26px;font-weight:bold;margin-bottom:4px}
+    .overlay-big{font-size:22px;font-weight:bold;line-height:1.35}
+    .overlay-icon{font-size:52px;margin-bottom:10px}
+    #ticker{position:fixed;bottom:0;left:0;right:0;background:#15803d;color:#fff;padding:12px;text-align:center;font-weight:bold;display:none;z-index:200;font-size:15px}
+    .empty{color:#666;font-size:14px}
+    #wedge{position:absolute;left:-9999px;opacity:0;height:1px;width:1px}
+    .gear{float:right;background:#4b5563;color:#fff;border:0;border-radius:10px;padding:9px 14px;font-size:15px;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+    <div class="card">
+        <button class="gear" onclick="toggleSettings()">Ayarlar</button>
+        <h1>Sınıf Ekranı</h1>
+        <div class="sub" id="hdrSub">Pasaport, yoklama ve haftanın kaşifleri</div>
+    </div>
+
+    <div class="card" id="settingsCard" style="display:none">
+        <h3>Okuyucu Anahtarı</h3>
+        <label>Anahtar (kasiyer panelinde tanımlıysa)</label>
+        <input id="tokenInput" placeholder="Boş bırakılabilir">
+        <p class="hint">Yalnızca bu tablete kaydedilir; okutma isteklerinde gönderilir.</p>
+        <div class="row" style="margin-top:12px">
+            <button class="btn btn-green" onclick="saveToken()">KAYDET</button>
+            <button class="btn btn-gray" onclick="toggleSettings()">KAPAT</button>
+        </div>
+    </div>
+
+    <div class="tabs">
+        <button id="tabPassport" class="active" onclick="showTab('passport')">Pasaport</button>
+        <button id="tabLead" onclick="showTab('lead')">Haftanın Kaşifleri</button>
+    </div>
+
+    <section class="panel active" id="panelPassport">
+        <div class="card">
+            <h3>Öğrenci Ara</h3>
+            <input id="searchInput" placeholder="Ad soyad yazın..." oninput="doSearch()" autocomplete="off">
+            <div class="row" style="margin-top:12px">
+                <button class="btn btn-gray" onclick="loadToday()">BUGÜNÜN DERSLERİ</button>
+            </div>
+        </div>
+        <div id="results"></div>
+        <div id="passport"></div>
+    </section>
+
+    <section class="panel" id="panelLead">
+        <div class="card">
+            <h3>Haftanın Kaşifleri</h3>
+            <div class="sub" id="leadWeek"></div>
+            <div id="leadList" style="margin-top:12px"><div class="empty">Yükleniyor...</div></div>
+        </div>
+    </section>
+</div>
+
+<!-- OKUTMA: öğrenci seçim ekranı -->
+<div class="modal-bg" id="overlay">
+    <div class="modal" id="ovChoose">
+        <div class="big-name" id="ovName">-</div>
+        <div class="sub" id="ovHint">Ne yapmak istiyorsun?</div>
+        <div id="ovClass" class="pill" style="display:none;margin:12px 0 0"></div>
+        <div style="margin-top:20px">
+            <button class="btn btn-blue" id="bDers" onclick="choose('DERS')" style="padding:22px;font-size:19px">📚 Ders</button>
+            <button class="btn btn-green" id="bOyun" onclick="choose('OYUN')" style="padding:22px;font-size:19px">🎠 Dramatik Oyun Alanı</button>
+        </div>
+    </div>
+    <div class="modal" id="ovResult" style="display:none">
+        <div class="overlay-icon" id="ovResultIcon">✅</div>
+        <div class="overlay-big" id="ovResultMsg"></div>
+        <div class="hint" id="ovCountdown" style="margin-top:16px"></div>
+    </div>
+</div>
+
+<div id="ticker"></div>
+<input id="wedge" autocomplete="off" autofocus aria-hidden="true">
+
+<script>
+'use strict';
+// Sınıf tableti: okutmayı öğrenciye sorar, pasaport görevini onaylar, liderlik tablosunu
+// gösterir. Elle yoklama ve ders açma YOKTUR; o uçlar bu portta hiç bağlı değildir.
+
+let currentTap = null;
+let activeChild = null;
+let pollTimer = null;
+let wedgeBuffer = '';
+let wedgeTimer = null;
+
+function hdr() {
+    const t = localStorage.getItem('reader_token') || '';
+    return t ? { 'Content-Type': 'application/json', 'X-Reader-Token': t } : { 'Content-Type': 'application/json' };
+}
+function api(path, opts) {
+    return fetch(path, Object.assign({ headers: hdr() }, opts || {})).then(r => r.json());
+}
+
+function showTab(which) {
+    document.getElementById('panelPassport').classList.toggle('active', which === 'passport');
+    document.getElementById('panelLead').classList.toggle('active', which === 'lead');
+    document.getElementById('tabPassport').classList.toggle('active', which === 'passport');
+    document.getElementById('tabLead').classList.toggle('active', which === 'lead');
+    if (which === 'lead') loadLeaderboard();
+}
+
+function toggleSettings() {
+    const c = document.getElementById('settingsCard');
+    const open = c.style.display !== 'none';
+    c.style.display = open ? 'none' : 'block';
+    if (!open) document.getElementById('tokenInput').value = localStorage.getItem('reader_token') || '';
+}
+function saveToken() {
+    const v = document.getElementById('tokenInput').value.trim();
+    if (v) localStorage.setItem('reader_token', v); else localStorage.removeItem('reader_token');
+    document.getElementById('settingsCard').style.display = 'none';
+    ticker(v ? 'Okuyucu anahtarı kaydedildi.' : 'Okuyucu anahtarı silindi.');
+}
+
+function ticker(msg, ok) {
+    const t = document.getElementById('ticker');
+    t.textContent = msg;
+    t.style.background = ok === false ? '#b91c1c' : '#15803d';
+    t.style.display = 'block';
+    clearTimeout(t._h);
+    t._h = setTimeout(() => { t.style.display = 'none'; }, 4000);
+}
+
+// ---------------------------------------------------------------- okutma akışı
+function showPrompt(tap) {
+    currentTap = tap;
+    document.getElementById('ovName').textContent = tap.student_name || '';
+    document.getElementById('ovChoose').style.display = 'block';
+    document.getElementById('ovResult').style.display = 'none';
+    const cls = document.getElementById('ovClass');
+    if (tap.has_class) {
+        cls.style.display = 'inline-block';
+        cls.textContent = '📚 ' + (tap.class_name || '') + ' · ' + (tap.start_time || '') + '-' + (tap.end_time || '');
+    } else { cls.style.display = 'none'; }
+    document.getElementById('ovHint').textContent = tap.inside
+        ? 'Oyun alanı girişiniz açık; çıkış kasadan yapılır.'
+        : 'Ne yapmak istiyorsun?';
+    document.getElementById('overlay').classList.add('show');
+    clearTimeout(showPrompt._t);
+    showPrompt._t = setTimeout(closePrompt, Math.max(10, tap.expires_in || 45) * 1000);
+}
+
+function closePrompt() {
+    document.getElementById('overlay').classList.remove('show');
+    currentTap = null;
+}
+
+async function choose(choice) {
+    if (!currentTap) return closePrompt();
+    const tapId = currentTap.tap_id;
+    const btns = document.querySelectorAll('#ovChoose button');
+    btns.forEach(b => { b.disabled = true; });
+    const out = await api('/classroom/tap/' + encodeURIComponent(tapId) + '/choose', { method: 'POST', body: JSON.stringify({ choice }) });
+    btns.forEach(b => { b.disabled = false; });
+    showResult(out);
+}
+
+function showResult(out) {
+    const ok = !!out.success;
+    document.getElementById('ovChoose').style.display = 'none';
+    document.getElementById('ovResult').style.display = 'block';
+    document.getElementById('ovResultIcon').textContent = ok ? (out.mode === 'DERS' ? '📚' : '🎠') : '⚠️';
+    document.getElementById('ovResultMsg').textContent = out.message || (ok ? 'Tamam.' : 'İşlem yapılamadı.');
+    let left = 5;
+    const cd = document.getElementById('ovCountdown');
+    cd.textContent = left + ' sn içinde kapanır';
+    clearInterval(showResult._i);
+    showResult._i = setInterval(() => {
+        left--;
+        cd.textContent = left + ' sn içinde kapanır';
+        if (left <= 0) { clearInterval(showResult._i); closePrompt(); }
+    }, 1000);
+    if (ok) refreshVisible();
+}
+
+// Okuyucu ağdan sunucuya gönderiyorsa bekleyen okutma yoklanır. En YENİ okutma önceliklidir
+// (kapıda duran çocuk en son okutandır); cevapsız kapanan seçim bir şey yazmadığı için kayıp olmaz.
+async function pollPending() {
+    try {
+        const out = await fetch('/classroom/api/pending').then(r => r.json());
+        if (!out.success || !out.taps.length) return;
+        const tap = out.taps[0];
+        if (currentTap && currentTap.tap_id === tap.tap_id) return;
+        if (document.getElementById('overlay').classList.contains('show') && currentTap && currentTap.child_id === tap.child_id) return;
+        showPrompt(tap);
+    } catch (e) { /* ağ hatasında akış devam eder */ }
+}
+
+// USB (klavye taklidi) okuyucular: sayfaya yazılan kart numarası yakalanır.
+function wedgeFocus() {
+    const w = document.getElementById('wedge');
+    if (document.activeElement !== w) w.focus();
+}
+document.addEventListener('click', wedgeFocus);
+document.getElementById('wedge').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        const card = wedgeBuffer.trim();
+        wedgeBuffer = '';
+        if (card.length >= 4) scanCard(card);
+        e.preventDefault();
+    } else if (e.key.length === 1) {
+        wedgeBuffer += e.key;
+        clearTimeout(wedgeTimer);
+        wedgeTimer = setTimeout(() => { wedgeBuffer = ''; }, 400);
+    }
+});
+setInterval(wedgeFocus, 2500);
+
+async function scanCard(rfid) {
+    const out = await api('/classroom/rfid/scan', { method: 'POST', body: JSON.stringify({ rfid_id: rfid }) });
+    if (!out.success) { ticker(out.message || 'Kart okunamadı.', false); return; }
+    if (out.repeated && currentTap && currentTap.tap_id === out.tap_id) return;
+    showPrompt(out);
+}
+
+// ---------------------------------------------------------------- pasaport
+async function doSearch() {
+    const q = document.getElementById('searchInput').value.trim();
+    const box = document.getElementById('results');
+    if (q.length < 2) { box.innerHTML = ''; return; }
+    const out = await fetch('/classroom/api/students/search?q=' + encodeURIComponent(q)).then(r => r.json());
+    if (!out.success || !out.students.length) {
+        box.innerHTML = '<div class="card"><div class="empty">Eşleşen öğrenci bulunamadı.</div></div>';
+        return;
+    }
+    box.innerHTML = out.students.map(s =>
+        '<div class="card"><div class="item"><div class="info"><b>' + esc(s.student_name) + '</b>' +
+        '<small>' + esc(s.child_id) + ' · ' + s.wallet_balance + ' puan</small></div>' +
+        '<div class="actions"><button class="btn btn-sm" onclick="openPassport(\'' + s.child_id + '\')">PASAPORT</button></div></div></div>'
+    ).join('');
+}
+
+async function loadToday() {
+    const out = await fetch('/classroom/api/today').then(r => r.json());
+    const box = document.getElementById('results');
+    document.getElementById('passport').innerHTML = '';
+    if (!out.success || !out.sessions.length) {
+        box.innerHTML = '<div class="card"><div class="empty">Bugün planlanmış ders yok.</div></div>';
+        return;
+    }
+    box.innerHTML = out.sessions.map(s => {
+        const kids = s.ogrenciler.length ? s.ogrenciler.map(o => {
+            const cls = o.yoklama === 'GELDİ' ? 'pill done' : (o.yoklama ? 'pill absent' : 'pill');
+            return '<div class="item"><div class="info"><b>' + esc(o.student_name) + '</b>' +
+                '<small><span class="' + cls + '">' + esc(o.yoklama || 'yoklama yok') + '</span></small></div>' +
+                '<div class="actions"><button class="btn btn-sm" onclick="openPassport(\'' + o.child_id + '\')">PASAPORT</button></div></div>';
+        }).join('') : '<div class="empty">Kayıtlı öğrenci yok.</div>';
+        return '<div class="card"><h3>' + esc(s.class_name) + ' · ' + (s.start_time || '') + '-' + (s.end_time || '') + '</h3>' + kids + '</div>';
+    }).join('');
+}
+
+async function openPassport(childId) {
+    activeChild = childId;
+    const out = await fetch('/classroom/api/passport/' + encodeURIComponent(childId)).then(r => r.json());
+    const box = document.getElementById('passport');
+    if (!out.success) { box.innerHTML = '<div class="card"><div class="empty">' + esc(out.message || 'Bulunamadı') + '</div></div>'; return; }
+    const tasks = out.tasks.map(t => {
+        const right = t.tamamlandi
+            ? '<div class="actions"><span class="pill done">✓ ' + (t.kazanilan_puan || t.points) + '</span>' +
+              '<button class="btn btn-sm btn-red" onclick="uncomplete(\'' + t.task_id + '\')">GERİ AL</button></div>'
+            : '<div class="actions"><button class="btn btn-sm btn-green" onclick="complete(\'' + t.task_id + '\')">İŞARETLE</button></div>';
+        return '<div class="item"><div class="info"><b>' + esc(t.name) + '</b><small>' + t.points + ' puan' +
+            (t.yapan ? ' · ' + esc(t.yapan) : '') + '</small></div>' + right + '</div>';
+    }).join('');
+    box.innerHTML = '<div class="card"><div class="item"><div class="info"><b style="font-size:21px">' + esc(out.student.student_name) + '</b>' +
+        '<small>' + esc(out.student.child_id) + ' · toplam ' + out.toplam_puan + ' puan</small></div>' +
+        '<div style="font-size:19px;font-weight:bold;color:#15803d;white-space:nowrap">' + out.student.wallet_balance + ' puan</div></div></div>' +
+        '<div class="card"><h3>Pasaport Görevleri</h3>' + (tasks || '<div class="empty">Görev tanımlı değil.</div>') + '</div>';
+    box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function complete(taskId) {
+    const out = await api('/classroom/api/passport/complete', { method: 'POST', body: JSON.stringify({ child_id: activeChild, task_id: taskId, personel: 'Sınıf' }) });
+    ticker(out.message || (out.success ? 'Tamamlandı.' : 'Yapılamadı.'), out.success);
+    if (activeChild) openPassport(activeChild);
+}
+async function uncomplete(taskId) {
+    const out = await api('/classroom/api/passport/uncomplete', { method: 'POST', body: JSON.stringify({ child_id: activeChild, task_id: taskId, personel: 'Sınıf' }) });
+    ticker(out.message || (out.success ? 'Geri alındı.' : 'Yapılamadı.'), out.success);
+    if (activeChild) openPassport(activeChild);
+}
+
+// ---------------------------------------------------------------- liderlik
+async function loadLeaderboard() {
+    const out = await fetch('/classroom/api/leaderboard/weekly').then(r => r.json());
+    const list = document.getElementById('leadList');
+    if (!out.success || !out.leaderboard.length) { list.innerHTML = '<div class="empty">Bu hafta henüz puan yok.</div>'; return; }
+    const medal = ['🥇', '🥈', '🥉'];
+    list.innerHTML = out.leaderboard.map(r =>
+        '<div class="item"><div class="info"><b>' + (medal[r.sira - 1] || (r.sira + '.')) + ' ' + esc(r.student_name) + '</b>' +
+        '<small>' + r.adet + ' görev</small></div>' +
+        '<div style="font-weight:bold;color:#1d4ed8;white-space:nowrap">' + r.toplam_puan + ' puan</div></div>'
+    ).join('');
+    document.getElementById('leadWeek').textContent = 'Hafta başlangıcı: ' + new Date(out.hafta_baslangici).toLocaleDateString('tr-TR');
+}
+
+function refreshVisible() {
+    if (document.getElementById('panelLead').classList.contains('active')) loadLeaderboard();
+    if (activeChild) openPassport(activeChild);
+}
+
+function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c]));
+}
+
+// ---------------------------------------------------------------- başlangıç
+(function init() {
+    document.getElementById('hdrSub').textContent = 'Pasaport, yoklama ve haftanın kaşifleri · ' + new Date().toLocaleDateString('tr-TR');
+    loadToday();
+    loadLeaderboard();
+    pollTimer = setInterval(pollPending, 1500);
+    wedgeFocus();
+})();
+</script>
+</body>
+</html>
