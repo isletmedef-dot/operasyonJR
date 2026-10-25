@@ -1,0 +1,47 @@
+{
+  "_aciklama": "Kullanıcının onayladığı düzeltmeler. duzeltme.js bu dosyayı okur, sonra bakiyeleri ilk verilen tutardan yeniden hesaplar.",
+  "_kurallar": {
+    "tutar": "paketten_dusen tarifeye göre düzeltilir (kullanıcı onayı).",
+    "sil": "Kayıt silinir; geri_ver yalnızca düşüm gerçekten bakiyeye yansımışsa true olur.",
+    "yeni": "Ziyaret kaydı yazılır. iyi_nimet=true ise kayıt görünür ama tutar düşülmez (işletme üstlenir).",
+    "yeniden_hesapla": "Her paketin bakiyesi = ilk verilen bakiye - tarifeye göre toplam kullanım. Böylece dökümde 'ilk 10.000 - kullanım X = kalan Y' tutar."
+  },
+
+  "tutar": [
+    { "log_id": "LOG-1790068532852", "child": "UC-000008", "yeni_tutar": 450,  "aciklama": "22.09.2026 30 dk ziyaret: eski sürüm 30 TL düşmüştü, tarife 450 TL (taban ücret)." },
+    { "log_id": "LOG-1790151235330", "child": "UC-000008", "yeni_tutar": 900,  "aciklama": "23.09.2026 109 dk ziyaret: eski sürüm 109 TL düşmüştü, tarife 900 TL." },
+    { "log_id": "LOG-1790172336315", "child": "UC-000009", "yeni_tutar": 1050, "aciklama": "23.09.2026 140 dk ziyaret: eski sürüm 140 TL düşmüştü, tarife 1.050 TL." },
+    { "log_id": "LOG-1790407800620", "child": "UC-000010", "yeni_tutar": 750,  "aciklama": "26.09.2026 94 dk ziyaret: eski sürüm 94 TL düşmüştü, tarife 750 TL." },
+    { "log_id": "LOG-1790416241991", "child": "UC-000011", "yeni_tutar": 1050, "aciklama": "26.09.2026 152 dk ziyaret: eski sürüm 152 TL düşmüştü, tarife 1.050 TL." },
+    { "log_id": "LOG-1790255800037", "child": "UC-000004", "yeni_tutar": 600,  "yeni_sure": 60, "aciklama": "24.09.2026 ziyaret 1 saat kabul edildi: eski sürüm 63 TL düşmüştü, tarife 600 TL." },
+    { "log_id": "LOG-1790342831611", "child": "UC-000004", "yeni_tutar": 600,  "yeni_sure": 60, "aciklama": "25.09.2026 ziyaret 1 saat kabul edildi: eski sürüm 63 TL düşmüştü, tarife 600 TL." }
+  ],
+
+  "sil": [
+    { "log_id": "LOG-1790088295752", "child": "UC-000004", "geri_ver": false, "aciklama": "22.09.2026 10 dk kayıt silindi (eski sürümün dakika bazlı düşümü; bakiye yeniden hesaplandığı için ayrıca geri eklenmez)." },
+    { "log_id": "LOG-1790088859773", "child": "UC-000004", "geri_ver": false, "aciklama": "22.09.2026 1.278 dk (21 saat) kayıt silindi; çıkış unutulmuştu." },
+
+    { "log_id": "LOG-1792077559378", "child": "UC-000016", "geri_ver": false, "aciklama": "15.10.2026 2 dk yanlış okutma silindi (kullanıcı onayı)." },
+    { "log_id": "LOG-1792333048570", "child": "UC-000016", "geri_ver": false, "aciklama": "18.10.2026 2 dk yanlış okutma silindi." },
+    { "log_id": "LOG-1792336010188", "child": "UC-000016", "geri_ver": false, "aciklama": "18.10.2026 1 dk yanlış okutma silindi." },
+    { "log_id": "LOG-1792336102015", "child": "UC-000016", "geri_ver": false, "aciklama": "18.10.2026 1 dk yanlış okutma silindi." },
+
+    { "log_id": "LOG-1792336926783", "child": "UC-000015", "geri_ver": false, "aciklama": "18.10.2026 1 dk yanlış okutma silindi." },
+    { "log_id": "LOG-1792336951245", "child": "UC-000015", "geri_ver": false, "aciklama": "18.10.2026 1 dk yanlış okutma silindi." },
+    { "log_id": "LOG-1792336986927", "child": "UC-000015", "geri_ver": false, "aciklama": "18.10.2026 1 dk yanlış okutma silindi." },
+
+    { "log_id": "LOG-1791566783525", "child": "UC-000009", "geri_ver": false, "aciklama": "09.10.2026 883 dk iptal kaydı silindi (çıkış unutulmuştu; yerine 1 saatlik kayıt yazıldı). Kayıt yanlış öğrenci kartına yazılmıştı (ad başka öğrenciyi gösteriyordu)." },
+    { "log_id": "LOG-1791566820756", "child": "UC-000009", "geri_ver": false, "aciklama": "09.10.2026 883 dk iptal kaydı (mükerrer) silindi." },
+
+    { "log_id": "LOG-1790519127905", "child": "UC-000008", "geri_ver": false, "aciklama": "27.09.2026 tarihli test kaydı silindi (kullanıcı onayı: test kaydı)." }
+  ],
+
+  "yeni": [
+    { "child": "UC-000016", "tarih": "2026-10-18", "giris": "2026-10-18T14:17:00.000Z", "sure": 60, "tutar": 600, "iyi_nimet": false,
+      "aciklama": "18.10.2026: 1-2 dk'lik yanlış okutmalar silindi, gerçek kullanım 1 saat / 600 TL olarak kaydedildi." },
+    { "child": "UC-000015", "tarih": "2026-10-18", "giris": "2026-10-18T15:22:00.000Z", "sure": 60, "tutar": 600, "iyi_nimet": false,
+      "aciklama": "18.10.2026: 1 dk'lik üç yanlış okutma silindi, gerçek kullanım 1 saat / 600 TL olarak kaydedildi." },
+    { "child": "UC-000015", "tarih": "2026-10-09", "giris": "2026-10-09T17:26:23.518Z", "sure": 60, "tutar": 600, "iyi_nimet": true,
+      "aciklama": "09.10.2026: çıkış unutulmuştu (883 dk iptal kaydı silindi). Gerçek kullanım 1 saat; kullanıcı talebiyle tutar İŞLETME TARAFINDAN ÜSTLENİLDİ (iyi niyet), bakiyeden düşülmedi." }
+  ]
+}
