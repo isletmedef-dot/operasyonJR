@@ -505,7 +505,7 @@ function loadAdminStudent(childId) {
   });
 }
 
-function saveAdminStudent() {
+function saveAdminStudent(not) {
   fetch('/api/students/edit', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ 
@@ -519,9 +519,19 @@ function saveAdminStudent() {
       note: document.getElementById('editNote').value,
       telafi_minutes: document.getElementById('editTelafiMinutes').value,
       telafi_dersi_count: document.getElementById('editTelafiDersiCount').value,
-      package_minutes: document.getElementById('editPackageMinutes').value
+      package_minutes: document.getElementById('editPackageMinutes').value,
+      duzeltme_notu: not || ''
     })
-  }).then(res=>res.json()).then(r => { alert(r.message); if (r.success) document.getElementById('adminEditForm').style.display = 'none'; });
+  }).then(res=>res.json()).then(r => {
+    // Bakiye elle değiştiyse sunucu not ister: popup açıp aynı kaydı notla tekrar göndeririz.
+    if (r.not_gerekli) {
+      const girilen = prompt('Bakiye elle değiştiriliyor.\n\nNeden yaptığınızı yazın (ileride dökümde ve profilde bu not görünecek):');
+      if (girilen && girilen.trim()) saveAdminStudent(girilen.trim());
+      return;
+    }
+    alert(r.message);
+    if (r.success) document.getElementById('adminEditForm').style.display = 'none';
+  });
 }
 
 function deleteAdminStudent() {

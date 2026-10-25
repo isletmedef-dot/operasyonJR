@@ -361,6 +361,7 @@ h1 { margin:0 0 20px 0; font-size:32px; }
         const rows = d.hareketler.map(h => {
             let tutar;
             if (h.iptal) tutar = 'İptal';
+            else if (/İyi niyet/i.test(String(h.ozet || ''))) tutar = 'İyi niyet (işletme üstlendi)';
             else if (h.paket_dk > 0) tutar = 'Paketten ' + stMoney(h.paket_dk);
             else if (h.nakit_tl > 0) tutar = stMoney(h.nakit_tl) + (h.puan_indirimi > 0 ? ' (−' + stMoney(h.puan_indirimi) + ' puan)' : '');
             else tutar = '—';
@@ -388,6 +389,7 @@ h1 { margin:0 0 20px 0; font-size:32px; }
             '<div class="st-sum">' +
             '<div><span>Ziyaret sayısı</span><b>' + stInt(d.ozet.ziyaret) + '</b></div>' +
             '<div><span>Nakit / kart tahsilatı</span><b>' + stMoney(d.ozet.nakit_tl) + '</b></div>' +
+            (d.kalan.paket_ilk > 0 ? '<div><span>Paket ilk bakiyesi</span><b>' + stMoney(d.kalan.paket_ilk) + '</b></div>' : '') +
             '<div><span>Paketten düşülen</span><b>' + stMoney(d.ozet.paket_dk) + '</b></div>' +
             (d.ozet.puan_indirimi > 0 ? '<div><span>Kullanılan puan indirimi</span><b>' + stMoney(d.ozet.puan_indirimi) + '</b></div>' : '') +
             '<div class="big"><span>Kalan paket</span><b>' + stMoney(d.kalan.paket_dk) + '</b></div>' +

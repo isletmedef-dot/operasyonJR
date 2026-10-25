@@ -887,7 +887,7 @@ app.post('/api/students/delete', (req, res) => {
 });
 
 app.post('/api/students/edit', async (req, res) => {
-    const { child_id, student_name, parent_name, parent_phone, birth_date, rfid_id, note, cari_turu, telafi_minutes, package_minutes, telafi_dersi_count } = req.body;
+    const { child_id, student_name, parent_name, parent_phone, birth_date, rfid_id, note, cari_turu, telafi_minutes, package_minutes, telafi_dersi_count, duzeltme_notu } = req.body;
     try {
         await withTransaction(async () => {
             await dbRun(
@@ -899,9 +899,32 @@ app.post('/api/students/edit', async (req, res) => {
             const newPackageMinutes = Math.max(0, Number(package_minutes || 0));
             const newTelafiDersiCount = Math.max(0, Number(telafi_dersi_count || 0));
 
+            // Elle bakiye değiştirildiğinde NEDEN yapıldığı kayda geçsin. Bugüne kadar yönetici
+            // paneli bakiyeyi değiştiriyor, gerekçe hiçbir yerde kalmıyordu; bu yüzden
+            // "kullanım 2.700 TL ama bakiye 3.300 TL eksilmiş" sorusu sonradan cevapsız kalıyordu.
+            const ellePersonel = await oturumBul(req).then((s) => (s && s.personel) || 'Yönetici').catch(() => 'Yönetici');
+            const elleNot = String(duzeltme_notu || '').trim();
+            const elleDegisiklik = async (hakTipi, hakId, eski, yeni, aciklama) => {
+                const fark = Number(yeni) - Number(eski);
+                if (Math.abs(fark) < 0.01) return;
+                if (!elleNot) {
+                    const e = new Error('Bakiye elle değiştiriliyor: lütfen düzeltme notu girin.');
+                    e.notGerekli = true;
+                    throw e;
+                }
+                await dbRun(`INSERT INTO right_movements (hareket_id, tarih, child_id, hak_id, islem, hak_tipi, degisim_dk,
+                                  onceki_kalan_dk, yeni_kalan_dk, kaynak, aciklama, log_id, personel)
+                              VALUES (?, ?, ?, ?, 'Yönetici Düzenlemesi', ?, ?, ?, ?, 'Yönetici Paneli', ?, NULL, ?)`,
+                    ['YON-' + Date.now() + '-' + Math.floor(Math.random() * 10000), new Date().toISOString(),
+                        child_id, hakId, hakTipi, fark, Number(eski), Number(yeni),
+                        aciklama + ' — Not: ' + elleNot, ellePersonel]);
+            };
+
             // --- TELAFİ dakikaları: varsa güncelle, yoksa tanımla ---
             const telafis = await dbAll(`SELECT * FROM rights WHERE child_id = ? AND hak_tipi = 'TELAFİ' AND durum = 'Aktif'`, [child_id]);
             if (telafis.length > 0) {
+                await elleDegisiklik('TELAFİ', telafis[0].hak_id, telafis[0].kalan_dk, newTelafiMins,
+                    'Oyun alanı telafisi elle değiştirildi (' + Number(telafis[0].kalan_dk || 0) + ' -> ' + newTelafiMins + ' dk).');
                 await dbRun(`UPDATE rights SET kalan_dk = ?, miktar_dk = ? WHERE hak_id = ?`, [newTelafiMins, newTelafiMins, telafis[0].hak_id]);
                 for (let i = 1; i < telafis.length; i++) {
                     await dbRun(`UPDATE rights SET durum = 'İptal', kalan_dk = 0 WHERE hak_id = ?`, [telafis[i].hak_id]);
@@ -916,6 +939,8 @@ app.post('/api/students/edit', async (req, res) => {
             // --- PAKET bakiyesi ---
             const packages = await dbAll(`SELECT * FROM rights WHERE child_id = ? AND hak_tipi = 'PAKET' AND durum = 'Aktif'`, [child_id]);
             if (packages.length > 0) {
+                await elleDegisiklik('PAKET', packages[0].hak_id, packages[0].kalan_dk, newPackageMinutes,
+                    'Paket bakiyesi elle değiştirildi (' + Number(packages[0].kalan_dk || 0) + ' -> ' + newPackageMinutes + ' TL).');
                 await dbRun(`UPDATE rights SET kalan_dk = ?, miktar_dk = ?, kalan_ana_para = ?, kalan_bonus = 0 WHERE hak_id = ?`,
                     [newPackageMinutes, newPackageMinutes, newPackageMinutes, packages[0].hak_id]);
                 for (let i = 1; i < packages.length; i++) {
@@ -942,7 +967,8 @@ app.post('/api/students/edit', async (req, res) => {
         });
         res.json({ success: true, message: "Öğrenci bilgileri ve hakları güncellendi." });
     } catch (err) {
-        res.json({ success: false, message: err.message });
+        // not_gerekli: istemci not sorup aynı isteği notla tekrar gönderir.
+        res.json({ success: false, message: err.message, not_gerekli: !!err.notGerekli });
     }
 });
 
@@ -1960,12 +1986,17 @@ app.get('/api/students/statement/:child_id', async (req, res) => {
                    paketten_dusen, kullanilan_puan, puan_indirimi, kazanilan_puan, status, source_summary
             FROM logs WHERE child_id = ? ORDER BY entry_time ASC LIMIT ?`, [child_id, limit]);
 
+        // Aynı ziyaret için birden fazla hareket olabilir (eski saat/dakika modeli + sonradan
+        // yapılan düzeltme). rowid sırasıyla okunup SON kayıt esas alınır; böylece dökümdeki
+        // "Kalan Bakiye" sütunu, ziyaretin eski hesabını değil güncel doğru bakiyeyi gösterir.
         const movements = await dbAll(`SELECT log_id, yeni_kalan_dk, hak_tipi FROM right_movements
-                                       WHERE child_id = ? AND log_id IS NOT NULL AND log_id <> ''`, [child_id]);
+                                       WHERE child_id = ? AND log_id IS NOT NULL AND log_id <> ''
+                                       ORDER BY rowid ASC`, [child_id]);
         const kalanByLog = {};
         movements.forEach((m) => { kalanByLog[m.log_id] = m; });
 
         const paket = await dbGet(`SELECT COALESCE(SUM(kalan_dk), 0) AS kalan_dk,
+                                          COALESCE(SUM(miktar_dk), 0) AS ilk,
                                           COALESCE(SUM(kalan_ana_para), 0) AS ana,
                                           COALESCE(SUM(kalan_bonus), 0) AS bonus
                                    FROM rights WHERE child_id = ? AND hak_tipi = 'PAKET' AND durum = 'Aktif'`, [child_id]);
@@ -2024,6 +2055,9 @@ app.get('/api/students/statement/:child_id', async (req, res) => {
             },
             kalan: {
                 paket_dk: Number(paket.kalan_dk || 0),
+                // İlk verilen bakiye: dökümde "ilk 10.000 - kullanım X = kalan Y" zinciri
+                // görünsün diye döner. Aksi halde kalan bakiye havadan gelmiş gibi okunuyor.
+                paket_ilk: Number(paket.ilk || 0),
                 paket_tl: Number(paket.ana || 0) + Number(paket.bonus || 0),
                 telafi_dk: Number(telafi.kalan_dk || 0),
                 puan: Number(student.wallet_balance || 0)

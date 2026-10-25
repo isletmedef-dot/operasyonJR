@@ -218,18 +218,53 @@ describe('students table', () => {
 
     test('editing telafi minutes again reuses the existing right instead of duplicating it', async () => {
         const id = await createStudent({ student_name: 'Tekrar Çocuk' });
-        const payload = (minutes) => ({
+        const payload = (minutes, not) => ({
             child_id: id, student_name: 'Tekrar Çocuk', parent_name: 'V', parent_phone: '5',
             birth_date: '2018-02-02', rfid_id: null, note: '', cari_turu: 'Oyun',
             telafi_minutes: minutes, package_minutes: 0, telafi_dersi_count: 0,
+            duzeltme_notu: not || '',
         });
         await agent.post('/api/students/edit').send(payload(60));
-        await agent.post('/api/students/edit').send(payload(45));
+        // İkinci düzenleme mevcut bakiyeyi DEĞİŞTİRİYOR: not zorunlu.
+        await agent.post('/api/students/edit').send(payload(45, 'Telafi süresi düzeltildi'));
 
         const rights = await all(dbi, "SELECT * FROM rights WHERE child_id = ? AND hak_tipi = 'TELAFİ'", [id]);
         expect(rights).toHaveLength(1);
         expect(rights[0].kalan_dk).toBe(45);
         expect(rights[0].miktar_dk).toBe(45);
+    });
+
+    test('elle bakiye değişikliği not ister; notsuz istek hiçbir şeyi değiştirmez', async () => {
+        const id = await createStudent({ student_name: 'Notlu Çocuk' });
+        const govde = (paket, not) => ({
+            child_id: id, student_name: 'Notlu Çocuk', parent_name: 'V', parent_phone: '5',
+            birth_date: '2018-02-02', rfid_id: null, note: '', cari_turu: 'Oyun',
+            telafi_minutes: 0, package_minutes: paket, telafi_dersi_count: 0,
+            duzeltme_notu: not || '',
+        });
+
+        await agent.post('/api/students/edit').send(govde(500));
+        const once = await get(dbi, "SELECT * FROM rights WHERE child_id = ? AND hak_tipi = 'PAKET'", [id]);
+        expect(once.kalan_dk).toBe(500);
+
+        // Not verilmeden bakiye düşürülmek istenirse: istek reddedilir, bakiye DEĞİŞMEZ.
+        const notsuz = await agent.post('/api/students/edit').send(govde(300));
+        expect(notsuz.body.not_gerekli).toBe(true);
+        const degismedi = await get(dbi, 'SELECT kalan_dk FROM rights WHERE hak_id = ?', [once.hak_id]);
+        expect(degismedi.kalan_dk).toBe(500);
+
+        // Notla birlikte geçer ve gerekçe harekete yazılır.
+        const notlu = await agent.post('/api/students/edit').send(govde(300, 'Sisteme girilmemiş kullanım düşüldü'));
+        expect(notlu.body.success).toBe(true);
+        const son = await get(dbi, 'SELECT kalan_dk FROM rights WHERE hak_id = ?', [once.hak_id]);
+        expect(son.kalan_dk).toBe(300);
+
+        const hareket = await all(dbi, "SELECT * FROM right_movements WHERE child_id = ? AND islem = 'Yönetici Düzenlemesi' ORDER BY rowid DESC LIMIT 1", [id]);
+        expect(hareket).toHaveLength(1);
+        expect(hareket[0].aciklama).toContain('Sisteme girilmemiş kullanım düşüldü');
+        expect(Number(hareket[0].degisim_dk)).toBe(-200);
+        expect(Number(hareket[0].onceki_kalan_dk)).toBe(500);
+        expect(Number(hareket[0].yeni_kalan_dk)).toBe(300);
     });
 
     test('editing can provision a package and makeup-lesson count', async () => {
