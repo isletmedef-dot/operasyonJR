@@ -449,7 +449,7 @@ function loadStaff() {
     fetch('/api/staff').then(r=>r.json()).then(data => {
         if(data.success) {
             document.getElementById('staffListArea').innerHTML = data.staff.map(s => 
-                '<div class="staff-item"><b>' + s.name + '</b><button class="action-btn btn-red" style="width:auto; padding:5px 10px; margin:0;" onclick="deleteStaff(\'' + s.pin + '\')">SİL</button></div>'
+                '<div class="staff-item"><b>' + s.name + '</b><button class="action-btn btn-red" style="width:auto; padding:5px 10px; margin:0;" onclick="deleteStaff(' + s.id + ')">SİL</button></div>'
             ).join('') || '<p style="color:#777; font-size:14px;">Personel bulunamadı.</p>';
         }
     });
@@ -467,10 +467,10 @@ function addStaff() {
     });
 }
 
-function deleteStaff(pin) {
+function deleteStaff(id) {
     if(confirm("Personeli silmek istediğinize emin misiniz?")) {
         fetch('/api/staff/delete', {
-            method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({pin})
+            method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id})
         }).then(()=>loadStaff());
     }
 }
@@ -541,5 +541,6 @@ function deleteAdminStudent() {
     }).catch(err => alert("Hata: " + err.message));
 }
 </script>
+  <script src="/oturum.js"></script>
 </body>
 </html>

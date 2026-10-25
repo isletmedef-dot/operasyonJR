@@ -9,7 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const ExcelJS = require('exceljs');
-const { makeTempDbPath, waitForSchema, openDb, get, all, run, closeDb } = require('../helpers/db');
+const { makeTempDbPath, waitForSchema, openDb, get, all, run, closeDb, authedAgent } = require('../helpers/db');
 
 jest.mock('pdf-to-printer', () => ({ print: jest.fn().mockResolvedValue(undefined) }));
 
@@ -24,8 +24,11 @@ const { app, db, calculateFee , drainWrites} = require('../../server.js');
 
 let dbi;
 
+let agent;
+
 beforeAll(async () => {
     await waitForSchema(DB_PATH);
+    agent = await authedAgent(app);
     dbi = openDb(DB_PATH);
 });
 
@@ -38,7 +41,7 @@ afterAll(async () => {
 beforeEach(() => ptp.print.mockClear());
 
 async function createStudent(overrides = {}) {
-    const res = await request(app).post('/api/students/create').send({
+    const res = await agent.post('/api/students/create').send({
         student_name: 'Oturum Çocuk',
         parent_name: 'Oturum Veli',
         parent_phone: '5551112233',
@@ -52,7 +55,7 @@ async function createStudent(overrides = {}) {
 
 /** Check a child in, then backdate entry_time so the session has a known length. */
 async function openSession(childId, minutesAgo) {
-    const started = await request(app).post('/api/entry/start').send({ child_id: childId, personel: 'Test' });
+    const started = await agent.post('/api/entry/start').send({ child_id: childId, personel: 'Test' });
     expect(started.body.success).toBe(true);
     const log = await get(dbi, "SELECT * FROM logs WHERE child_id = ? AND status = 'AÇIK'", [childId]);
     await run(dbi, 'UPDATE logs SET entry_time = ? WHERE log_id = ?',
@@ -80,7 +83,7 @@ const binaryParser = (res, cb) => {
 describe('check-in', () => {
     test('creates an open session and prints an entry receipt', async () => {
         const id = await createStudent({ student_name: 'Giren Çocuk', parent_phone: '5559998877' });
-        const res = await request(app).post('/api/entry/start').send({ child_id: id, personel: 'Ayşe' });
+        const res = await agent.post('/api/entry/start').send({ child_id: id, personel: 'Ayşe' });
         expect(res.body.success).toBe(true);
 
         const log = await currentLog(id);
@@ -104,13 +107,13 @@ describe('check-in', () => {
 
     test('refuses a second check-in for a child already inside', async () => {
         const id = await createStudent({ student_name: 'Çift Giriş' });
-        await request(app).post('/api/entry/start').send({ child_id: id });
-        const again = await request(app).post('/api/entry/start').send({ child_id: id });
+        await agent.post('/api/entry/start').send({ child_id: id });
+        const again = await agent.post('/api/entry/start').send({ child_id: id });
         expect(again.body).toEqual({ success: false, message: 'Çocuk zaten içeride.' });
     });
 
     test('registration with start_entry opens a session and prints', async () => {
-        const res = await request(app).post('/api/students/create').send({
+        const res = await agent.post('/api/students/create').send({
             student_name: 'Yeni Giren', parent_name: 'Veli', parent_phone: '5550000001',
             birth_date: '2017-03-03', start_entry: true, personel: 'Kayıt',
         });
@@ -126,7 +129,7 @@ describe('GET /api/inside', () => {
         const id = await createStudent({ student_name: 'İçerdeki Çocuk' });
         await openSession(id, 20);
 
-        const res = await request(app).get('/api/inside');
+        const res = await agent.get('/api/inside');
         expect(res.body.success).toBe(true);
         const row = res.body.children.find((c) => c.child_id === id);
         expect(row).toBeTruthy();
@@ -141,7 +144,7 @@ describe('GET /api/inside', () => {
         const id = await createStudent({ student_name: 'Uzun Kalan' });
         await openSession(id, 130);
 
-        const res = await request(app).get('/api/inside');
+        const res = await agent.get('/api/inside');
         const row = res.body.children.find((c) => c.child_id === id);
         expect(row.warning).toBe(true);
         expect(row.alarm).toBe(true);
@@ -152,15 +155,15 @@ describe('GET /api/inside', () => {
         const b = await createStudent({ student_name: 'İçerde B' });
         const outside = await createStudent({ student_name: 'Dışarda C' });
 
-        await request(app).post('/api/rights/add-telafi').send({ child_id: a, minutes: 60 });
-        await request(app).post('/api/rights/add-package').send({ child_id: b, price: 250, bonus: 50 });
+        await agent.post('/api/rights/add-telafi').send({ child_id: a, minutes: 60 });
+        await agent.post('/api/rights/add-package').send({ child_id: b, price: 250, bonus: 50 });
         // a child who is NOT inside: their rights must not leak into anyone else's row
-        await request(app).post('/api/rights/add-telafi').send({ child_id: outside, minutes: 999 });
+        await agent.post('/api/rights/add-telafi').send({ child_id: outside, minutes: 999 });
 
         await openSession(a, 20);
         await openSession(b, 30);
 
-        const res = await request(app).get('/api/inside');
+        const res = await agent.get('/api/inside');
         const ids = res.body.children.map((c) => c.child_id);
         expect(ids).toContain(a);
         expect(ids).toContain(b);
@@ -184,18 +187,18 @@ describe('pause / resume', () => {
         const id = await createStudent({ student_name: 'Duraklatan' });
         await openSession(id, 20);
 
-        const paused = await request(app).post('/api/entry/pause-toggle').send({ child_id: id });
+        const paused = await agent.post('/api/entry/pause-toggle').send({ child_id: id });
         expect(paused.body).toEqual({ success: true, message: 'Duraklatıldı.' });
 
         // pretend the child has been paused for 10 minutes
         await run(dbi, 'UPDATE logs SET paused_at = ? WHERE child_id = ? AND status = ?',
             [new Date(Date.now() - 10 * 60000).toISOString(), id, 'AÇIK']);
 
-        const during = await request(app).get(`/api/exit/preview/${id}`);
+        const during = await agent.get(`/api/exit/preview/${id}`);
         expect(during.body.sure_dk).toBeGreaterThanOrEqual(10);
         expect(during.body.sure_dk).toBeLessThanOrEqual(12);
 
-        const resumed = await request(app).post('/api/entry/pause-toggle').send({ child_id: id });
+        const resumed = await agent.post('/api/entry/pause-toggle').send({ child_id: id });
         expect(resumed.body).toEqual({ success: true, message: 'Devam ediliyor.' });
 
         const log = await currentLog(id);
@@ -203,13 +206,13 @@ describe('pause / resume', () => {
         expect(log.paused_at).toBeNull();
         expect(log.total_pause_duration).toBeGreaterThanOrEqual(9);
 
-        const after = await request(app).get(`/api/exit/preview/${id}`);
+        const after = await agent.get(`/api/exit/preview/${id}`);
         expect(after.body.sure_dk).toBeLessThanOrEqual(12);
     });
 
     test('pause-toggle without an open session is rejected', async () => {
         const id = await createStudent({ student_name: 'Oturumsuz' });
-        const res = await request(app).post('/api/entry/pause-toggle').send({ child_id: id });
+        const res = await agent.post('/api/entry/pause-toggle').send({ child_id: id });
         expect(res.body).toEqual({ success: false, message: 'Kayıt bulunamadı.' });
     });
 });
@@ -218,7 +221,7 @@ describe('checkout — cash modes', () => {
     test('preview reports the fee for the elapsed time', async () => {
         const id = await createStudent({ student_name: 'Önizleme' });
         await openSession(id, 20);
-        const res = await request(app).get(`/api/exit/preview/${id}`);
+        const res = await agent.get(`/api/exit/preview/${id}`);
         expect(res.body.success).toBe(true);
         expect(res.body.fee).toBe(calculateFee(res.body.sure_dk));
         expect(res.body.student_name).toBe('Önizleme');
@@ -228,7 +231,7 @@ describe('checkout — cash modes', () => {
         const id = await createStudent({ student_name: 'Nakit Çocuk' });
         await openSession(id, 20);
 
-        const res = await request(app).post('/api/exit/finalize')
+        const res = await agent.post('/api/exit/finalize')
             .send({ child_id: id, payment_type: 'NAKİT', personel: 'Kasa' });
         expect(res.body.success).toBe(true);
 
@@ -250,7 +253,7 @@ describe('checkout — cash modes', () => {
     test('finalize with KREDİ KARTI records a card payment', async () => {
         const id = await createStudent({ student_name: 'Kart Çocuk' });
         await openSession(id, 45);
-        await request(app).post('/api/exit/finalize').send({ child_id: id, payment_type: 'KREDİ KARTI' });
+        await agent.post('/api/exit/finalize').send({ child_id: id, payment_type: 'KREDİ KARTI' });
 
         const log = await get(dbi, "SELECT * FROM logs WHERE child_id = ? AND status = 'KAPALI'", [id]);
         expect(log.payment_type).toBe('KREDİ KARTI');
@@ -261,7 +264,7 @@ describe('checkout — cash modes', () => {
     test('finalize with ÜCRETSİZ stores a zero fee', async () => {
         const id = await createStudent({ student_name: 'Ücretsiz Çocuk' });
         await openSession(id, 45);
-        await request(app).post('/api/exit/finalize').send({ child_id: id, payment_type: 'ÜCRETSİZ' });
+        await agent.post('/api/exit/finalize').send({ child_id: id, payment_type: 'ÜCRETSİZ' });
 
         const log = await get(dbi, "SELECT * FROM logs WHERE child_id = ? AND status = 'KAPALI'", [id]);
         expect(log.fee).toBe(0);
@@ -271,7 +274,7 @@ describe('checkout — cash modes', () => {
     test('a session inside the tolerance window is free', async () => {
         const id = await createStudent({ student_name: 'Tolerans Çocuk' });
         await openSession(id, 3);
-        await request(app).post('/api/exit/finalize').send({ child_id: id, payment_type: 'NAKİT' });
+        await agent.post('/api/exit/finalize').send({ child_id: id, payment_type: 'NAKİT' });
 
         const log = await get(dbi, "SELECT * FROM logs WHERE child_id = ? AND status = 'KAPALI'", [id]);
         expect(log.duration_min).toBeLessThanOrEqual(5);
@@ -280,13 +283,13 @@ describe('checkout — cash modes', () => {
 
     test('finalize without an open session is rejected', async () => {
         const id = await createStudent({ student_name: 'Kapalı Çocuk' });
-        const res = await request(app).post('/api/exit/finalize').send({ child_id: id, payment_type: 'NAKİT' });
+        const res = await agent.post('/api/exit/finalize').send({ child_id: id, payment_type: 'NAKİT' });
         expect(res.body).toEqual({ success: false, message: 'Aktif giriş bulunamadı.' });
     });
 
     test('preview without an open session is rejected', async () => {
         const id = await createStudent({ student_name: 'Önizlemesiz' });
-        const res = await request(app).get(`/api/exit/preview/${id}`);
+        const res = await agent.get(`/api/exit/preview/${id}`);
         expect(res.body).toEqual({ success: false, message: 'Çocuk içeride görünmüyor.' });
     });
 });
@@ -295,17 +298,17 @@ describe('checkout — telafi (HAK)', () => {
     test('refuses checkout on HAK when there is no makeup balance', async () => {
         const id = await createStudent({ student_name: 'Bakiyesiz' });
         await openSession(id, 20);
-        const res = await request(app).post('/api/exit/finalize').send({ child_id: id, payment_type: 'HAK' });
+        const res = await agent.post('/api/exit/finalize').send({ child_id: id, payment_type: 'HAK' });
         expect(res.body).toEqual({ success: false, message: 'Yeterli telafi bakiyesi (dakika) yok.' });
         expect(await currentLog(id)).toBeTruthy(); // session stays open
     });
 
     test('deducts makeup minutes and writes a usage movement', async () => {
         const id = await createStudent({ student_name: 'Telafi Çocuk' });
-        await request(app).post('/api/rights/add-telafi').send({ child_id: id, minutes: 120, personel: 'Test' });
+        await agent.post('/api/rights/add-telafi').send({ child_id: id, minutes: 120, personel: 'Test' });
         await openSession(id, 20);
 
-        const res = await request(app).post('/api/exit/finalize')
+        const res = await agent.post('/api/exit/finalize')
             .send({ child_id: id, payment_type: 'HAK', personel: 'Kasa' });
         expect(res.body.success).toBe(true);
 
@@ -335,11 +338,11 @@ describe('checkout — telafi (HAK)', () => {
         await openSession(id, 45);
 
         // give the child exactly as many makeup minutes as the session will burn
-        const preview = await request(app).get(`/api/exit/preview/${id}`);
+        const preview = await agent.get(`/api/exit/preview/${id}`);
         const sureDk = preview.body.sure_dk;
-        await request(app).post('/api/rights/add-telafi').send({ child_id: id, minutes: sureDk });
+        await agent.post('/api/rights/add-telafi').send({ child_id: id, minutes: sureDk });
 
-        const res = await request(app).post('/api/exit/finalize').send({ child_id: id, payment_type: 'HAK' });
+        const res = await agent.post('/api/exit/finalize').send({ child_id: id, payment_type: 'HAK' });
         expect(res.body.success).toBe(true);
 
         const log = await get(dbi, "SELECT * FROM logs WHERE child_id = ? AND status = 'KAPALI'", [id]);
@@ -354,7 +357,7 @@ describe('checkout — telafi (HAK)', () => {
 describe('checkout — package (PAKET)', () => {
     test('refuses checkout on PAKET when the balance is too small', async () => {
         const id = await createStudent({ student_name: 'Az Bakiye' });
-        await request(app).post('/api/rights/add-package').send({ child_id: id, price: 100, bonus: 0 });
+        await agent.post('/api/rights/add-package').send({ child_id: id, price: 100, bonus: 0 });
 
         // the balance must really exist, otherwise this test passes for the wrong reason
         const right = await get(dbi, "SELECT * FROM rights WHERE child_id = ? AND hak_tipi = 'PAKET'", [id]);
@@ -362,18 +365,18 @@ describe('checkout — package (PAKET)', () => {
         expect(right.kalan_dk).toBe(100);
 
         await openSession(id, 20);
-        const res = await request(app).post('/api/exit/finalize').send({ child_id: id, payment_type: 'PAKET' });
+        const res = await agent.post('/api/exit/finalize').send({ child_id: id, payment_type: 'PAKET' });
         expect(res.body).toEqual({ success: false, message: 'Yeterli paket bakiyesi (TL) yok.' });
     });
 
     test('spends the principal before the bonus and exhausts the package', async () => {
         const id = await createStudent({ student_name: 'Paket Çocuk' });
-        await request(app).post('/api/rights/add-package')
+        await agent.post('/api/rights/add-package')
             .send({ child_id: id, price: 500, bonus: 100, payment_type: 'NAKİT', personel: 'Kasa' });
 
         // first checkout: ~300 TL tier
         await openSession(id, 20);
-        let res = await request(app).post('/api/exit/finalize').send({ child_id: id, payment_type: 'PAKET' });
+        let res = await agent.post('/api/exit/finalize').send({ child_id: id, payment_type: 'PAKET' });
         expect(res.body.success).toBe(true);
 
         let log = await get(dbi, "SELECT * FROM logs WHERE child_id = ? AND status = 'KAPALI'", [id]);
@@ -390,7 +393,7 @@ describe('checkout — package (PAKET)', () => {
 
         // second checkout: drains the remaining principal, then the bonus
         await openSession(id, 20);
-        res = await request(app).post('/api/exit/finalize').send({ child_id: id, payment_type: 'PAKET' });
+        res = await agent.post('/api/exit/finalize').send({ child_id: id, payment_type: 'PAKET' });
         expect(res.body.success).toBe(true);
 
         right = await get(dbi, "SELECT * FROM rights WHERE child_id = ? AND hak_tipi = 'PAKET'", [id]);
@@ -406,18 +409,18 @@ describe('checkout — package (PAKET)', () => {
 
         // third checkout: nothing left
         await openSession(id, 20);
-        res = await request(app).post('/api/exit/finalize').send({ child_id: id, payment_type: 'PAKET' });
+        res = await agent.post('/api/exit/finalize').send({ child_id: id, payment_type: 'PAKET' });
         expect(res.body.success).toBe(false);
     });
 
     test('two simultaneous checkouts cannot double-spend the same balance', async () => {
         const id = await createStudent({ student_name: 'Yarış Çocuk' });
-        await request(app).post('/api/rights/add-package').send({ child_id: id, price: 1000, bonus: 0 });
+        await agent.post('/api/rights/add-package').send({ child_id: id, price: 1000, bonus: 0 });
         await openSession(id, 20);
 
         const [first, second] = await Promise.all([
-            request(app).post('/api/exit/finalize').send({ child_id: id, payment_type: 'PAKET', personel: 'Kasa 1' }),
-            request(app).post('/api/exit/finalize').send({ child_id: id, payment_type: 'PAKET', personel: 'Kasa 2' }),
+            agent.post('/api/exit/finalize').send({ child_id: id, payment_type: 'PAKET', personel: 'Kasa 1' }),
+            agent.post('/api/exit/finalize').send({ child_id: id, payment_type: 'PAKET', personel: 'Kasa 2' }),
         ]);
 
         // exactly one checkout may win; the other must find no open session
@@ -442,7 +445,7 @@ describe('checkout — package (PAKET)', () => {
 
 describe('receipt printing — status slip', () => {
     test('prints an on-demand status slip', async () => {
-        const res = await request(app).post('/api/print/status').send({
+        const res = await agent.post('/api/print/status').send({
             student_name: 'Fiş Çocuk', child_id: 'UC-000123', parent_phone: '5551112233',
             entry_time_fmt: '14:05', sure_dk: 42, estimated_fee: 500,
         });
@@ -468,7 +471,7 @@ describe('expiry engine', () => {
             ['HAK-EXPIRED-1', id, new Date().toISOString(), yesterday]);
 
         // any endpoint that runs the expiry sweeper first
-        const res = await request(app).get(`/api/students/get/${id}`);
+        const res = await agent.get(`/api/students/get/${id}`);
         expect(res.body.success).toBe(true);
 
         const expired = await get(dbi, 'SELECT * FROM rights WHERE hak_id = ?', ['HAK-EXPIRED-1']);
@@ -490,7 +493,7 @@ describe('expiry engine', () => {
              VALUES (?, ?, 'PAKET', 500, 500, 500, 0, 'test', ?, ?, 'Aktif', 'Test')`,
             ['PAK-EXPIRED-1', id, new Date().toISOString(), yesterday]);
 
-        await request(app).get(`/api/students/get/${id}`);
+        await agent.get(`/api/students/get/${id}`);
 
         const row = await get(dbi, 'SELECT * FROM rights WHERE hak_id = ?', ['PAK-EXPIRED-1']);
         expect(row.durum).toBe('Süresi Doldu');
@@ -498,7 +501,7 @@ describe('expiry engine', () => {
 
         // and an expired package can no longer pay for a checkout
         await openSession(id, 20);
-        const res = await request(app).post('/api/exit/finalize').send({ child_id: id, payment_type: 'PAKET' });
+        const res = await agent.post('/api/exit/finalize').send({ child_id: id, payment_type: 'PAKET' });
         expect(res.body.success).toBe(false);
     });
 
@@ -510,7 +513,7 @@ describe('expiry engine', () => {
              VALUES (?, ?, 'TELAFİ', 120, 120, 'test', ?, 'İşleniyor', 'Test')`,
             ['HAK-STUCK-1', id, new Date().toISOString()]);
 
-        await request(app).get(`/api/students/get/${id}`);
+        await agent.get(`/api/students/get/${id}`);
 
         const stuck = await get(dbi, 'SELECT * FROM rights WHERE hak_id = ?', ['HAK-STUCK-1']);
         expect(stuck.durum).toBe('Süresi Doldu (Dönüştü)');
@@ -522,10 +525,10 @@ describe('expiry engine', () => {
 
     test('does nothing when there is no expired work to do', async () => {
         const id = await createStudent({ student_name: 'Temiz Çocuk' });
-        await request(app).post('/api/rights/add-telafi').send({ child_id: id, minutes: 45 });
+        await agent.post('/api/rights/add-telafi').send({ child_id: id, minutes: 45 });
 
         const before = await get(dbi, "SELECT * FROM rights WHERE child_id = ? AND hak_tipi = 'TELAFİ'", [id]);
-        await request(app).get('/api/students/get/' + id);
+        await agent.get('/api/students/get/' + id);
         const after = await get(dbi, "SELECT * FROM rights WHERE child_id = ? AND hak_tipi = 'TELAFİ'", [id]);
 
         expect(after.durum).toBe('Aktif');
@@ -542,7 +545,7 @@ describe('end-of-day reporting', () => {
         const card = closedToday.filter((l) => l.payment_type === 'KREDİ KARTI').reduce((s, l) => s + l.fee, 0);
         const insideRows = await get(dbi, "SELECT COUNT(*) AS c FROM logs WHERE status = 'AÇIK'");
 
-        const res = await request(app).get('/api/reports/summary');
+        const res = await agent.get('/api/reports/summary');
         expect(res.body.success).toBe(true);
         expect(res.body.inside_count).toBe(insideRows.c);
         expect(res.body.today.entries).toBe(closedToday.length);
@@ -554,7 +557,7 @@ describe('end-of-day reporting', () => {
     });
 
     test('GET /api/export/excel returns a 4-sheet workbook of the whole database', async () => {
-        const res = await request(app).get('/api/export/excel').buffer(true).parse(binaryParser);
+        const res = await agent.get('/api/export/excel').buffer(true).parse(binaryParser);
         expect(res.status).toBe(200);
         expect(res.headers['content-type']).toContain('spreadsheetml.sheet');
         expect(res.body.subarray(0, 2).toString('utf8')).toBe('PK');

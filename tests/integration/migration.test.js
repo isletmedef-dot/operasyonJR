@@ -14,8 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const {
     makeTempDbPath, openDb, all, get, run, closeDb, waitForSchema,
-    EXPECTED_COLUMNS, EXPECTED_INDEXES,
-} = require('../helpers/db');
+    EXPECTED_COLUMNS, EXPECTED_INDEXES, authedAgent } = require('../helpers/db');
 
 jest.mock('pdf-to-printer', () => ({ print: jest.fn().mockResolvedValue(undefined) }));
 
@@ -37,6 +36,8 @@ const LEGACY_STATEMENTS = [
     `INSERT INTO rights (hak_id, child_id, hak_tipi, miktar_dk, kalan_dk, kaynak, tanim_tarihi, durum) VALUES ('PAK-OLD-1', 'UC-000001', 'PAKET', 400, 400, 'Eski Satış', '2026-01-01T00:00:00.000Z', 'Aktif')`,
 ];
 
+let agent;
+
 beforeAll(async () => {
     // build the legacy fixture on disk BEFORE the app opens it
     const setup = openDb(DB_PATH);
@@ -48,6 +49,7 @@ beforeAll(async () => {
 
     ({ app, db, drainWrites } = require('../../server.js')); // boot migrations run at require time
     await waitForSchema(DB_PATH);
+    agent = await authedAgent(app);
     dbi = openDb(DB_PATH);
 });
 
@@ -99,7 +101,7 @@ describe('upgrading a database from an older version', () => {
 
 describe('the upgraded database is fully functional', () => {
     test('serves pre-existing students over the API', async () => {
-        const res = await request(app).get('/api/students/get/UC-000001');
+        const res = await agent.get('/api/students/get/UC-000001');
         expect(res.body.success).toBe(true);
         expect(res.body.student.student_name).toBe('Eski Çocuk');
         expect(res.body.student.rights_summary.package_minutes).toBe(400);
@@ -107,7 +109,7 @@ describe('the upgraded database is fully functional', () => {
     });
 
     test('a package sale now actually persists', async () => {
-        const res = await request(app).post('/api/rights/add-package')
+        const res = await agent.post('/api/rights/add-package')
             .send({ child_id: 'UC-000001', price: 500, bonus: 100, payment_type: 'NAKİT', personel: 'Kasa' });
         expect(res.body.success).toBe(true);
 
@@ -120,24 +122,24 @@ describe('the upgraded database is fully functional', () => {
     });
 
     test('pausing a session works, which it could not before the fix', async () => {
-        await request(app).post('/api/entry/start').send({ child_id: 'UC-000001', personel: 'Test' });
+        await agent.post('/api/entry/start').send({ child_id: 'UC-000001', personel: 'Test' });
 
-        const pause = await request(app).post('/api/entry/pause-toggle').send({ child_id: 'UC-000001' });
+        const pause = await agent.post('/api/entry/pause-toggle').send({ child_id: 'UC-000001' });
         expect(pause.body).toEqual({ success: true, message: 'Duraklatıldı.' });
 
         const log = await get(dbi, "SELECT * FROM logs WHERE child_id = ? AND status = 'AÇIK'", ['UC-000001']);
         expect(log.is_paused).toBe(1);
         expect(log.paused_at).toBeTruthy();
 
-        const resume = await request(app).post('/api/entry/pause-toggle').send({ child_id: 'UC-000001' });
+        const resume = await agent.post('/api/entry/pause-toggle').send({ child_id: 'UC-000001' });
         expect(resume.body).toEqual({ success: true, message: 'Devam ediliyor.' });
     });
 
     test('a full checkout with a package completes', async () => {
-        const preview = await request(app).get('/api/exit/preview/UC-000001');
+        const preview = await agent.get('/api/exit/preview/UC-000001');
         expect(preview.body.success).toBe(true);
 
-        const fin = await request(app).post('/api/exit/finalize')
+        const fin = await agent.post('/api/exit/finalize')
             .send({ child_id: 'UC-000001', payment_type: 'PAKET', personel: 'Kasa' });
         expect(fin.body.success).toBe(true);
 

@@ -7,7 +7,7 @@
  * oyun alanı ÇIKIŞI yapılamaz.
  */
 const path = require('path');
-const { makeTempDbPath, waitForSchema, openDb, get, all, closeDb } = require('../helpers/db');
+const { makeTempDbPath, waitForSchema, openDb, get, all, closeDb, authedAgent } = require('../helpers/db');
 
 jest.mock('pdf-to-printer', () => ({ print: jest.fn().mockResolvedValue(undefined) }));
 
@@ -22,8 +22,13 @@ const {
 
 let dbi;
 
+let agent;
+let classroomAgent;
+
 beforeAll(async () => {
     await waitForSchema(DB_PATH);
+    agent = await authedAgent(app);
+    classroomAgent = await authedAgent(classroomApp);
     dbi = openDb(DB_PATH);
 });
 
@@ -42,32 +47,32 @@ const hhmm = (minsFromNow) => {
 };
 
 async function makeClass(body = {}) {
-    const res = await request(app).post('/api/classes/add').send({ name: 'Sınıf Dersi', monthly_fee: 1200, term_fee: 3600, ...body });
+    const res = await agent.post('/api/classes/add').send({ name: 'Sınıf Dersi', monthly_fee: 1200, term_fee: 3600, ...body });
     expect(res.body.success).toBe(true);
     return res.body.class_id;
 }
 async function makeSession(classId, startMin, endMin, extra = {}) {
-    const res = await request(app).post('/api/sessions/add').send({
+    const res = await agent.post('/api/sessions/add').send({
         class_id: classId, day_of_week: dow(), start_time: hhmm(startMin), end_time: hhmm(endMin), ...extra,
     });
     expect(res.body.success).toBe(true);
     return res.body.session_id;
 }
 async function makeStudent(name, rfid = null) {
-    const res = await request(app).post('/api/students/create').send({
+    const res = await agent.post('/api/students/create').send({
         student_name: name, parent_name: 'Veli', parent_phone: '5550000', birth_date: '2016-01-01', rfid_id: rfid,
     });
     expect(res.body.success).toBe(true);
     return res.body.child_id;
 }
-const register = (child_id, session_id) => request(app).post('/api/classes/register').send({ child_id, session_id, payment_type: 'AYLIK' });
+const register = (child_id, session_id) => agent.post('/api/classes/register').send({ child_id, session_id, payment_type: 'AYLIK' });
 const scan = (rfid_id, token) => {
-    const r = request(classroomApp).post('/classroom/rfid/scan');
+    const r = classroomAgent.post('/classroom/rfid/scan');
     if (token) r.set('X-Reader-Token', token);
     return r.send({ rfid_id });
 };
 const choose = (tapId, choice, token) => {
-    const r = request(classroomApp).post('/classroom/tap/' + tapId + '/choose');
+    const r = classroomAgent.post('/classroom/tap/' + tapId + '/choose');
     if (token) r.set('X-Reader-Token', token);
     return r.send({ choice });
 };
@@ -80,41 +85,41 @@ describe('port izolasyonu — iki arayüz birbirinin ucunu görmez', () => {
             '/api/students/create', '/api/entry/start',
         ];
         for (const p of cashierPaths) {
-            const res = await request(classroomApp).get(p);
+            const res = await classroomAgent.get(p);
             expect(res.status).toBe(404);
         }
         // POST ile de erişilemez: öğretmen elle yoklama alamaz, ders açamaz
-        const att = await request(classroomApp).post('/api/classes/attendance').send({ child_id: 'X', session_id: 'Y', durum: 'GELDİ' });
+        const att = await classroomAgent.post('/api/classes/attendance').send({ child_id: 'X', session_id: 'Y', durum: 'GELDİ' });
         expect(att.status).toBe(404);
-        const add = await request(classroomApp).post('/api/classes/add').send({ name: 'Kaçak Ders' });
+        const add = await classroomAgent.post('/api/classes/add').send({ name: 'Kaçak Ders' });
         expect(add.status).toBe(404);
         const rows = await all(dbi, "SELECT * FROM classes WHERE name = 'Kaçak Ders'");
         expect(rows).toHaveLength(0);
     });
 
     test('kasiyer portunda sınıf uçları YOKTUR', async () => {
-        expect((await request(app).post('/classroom/rfid/scan').send({ rfid_id: 'x' })).status).toBe(404);
-        expect((await request(app).get('/classroom/api/pending')).status).toBe(404);
-        expect((await request(app).post('/classroom/api/passport/complete').send({})).status).toBe(404);
+        expect((await agent.post('/classroom/rfid/scan').send({ rfid_id: 'x' })).status).toBe(404);
+        expect((await agent.get('/classroom/api/pending')).status).toBe(404);
+        expect((await agent.post('/classroom/api/passport/complete').send({})).status).toBe(404);
     });
 
     test('sınıf ekranı tablet sayfasını sunar, kasiyer sayfalarını sunmaz', async () => {
-        const home = await request(classroomApp).get('/');
+        const home = await classroomAgent.get('/');
         expect(home.status).toBe(200);
         expect(home.text).toContain('Sınıf Ekranı');
-        expect((await request(classroomApp).get('/home.html')).status).toBe(404);
-        expect((await request(classroomApp).get('/inside.html')).status).toBe(404);
+        expect((await classroomAgent.get('/home.html')).status).toBe(404);
+        expect((await classroomAgent.get('/inside.html')).status).toBe(404);
     });
 
     test('sınıf arama ucu yalnızca ad ve puan döner (veli telefonu yok)', async () => {
         await makeStudent('Zeynep Deneme', 'CARD-SRCH');
-        const res = await request(classroomApp).get('/classroom/api/students/search?q=zeynep');
+        const res = await classroomAgent.get('/classroom/api/students/search?q=zeynep');
         expect(res.body.success).toBe(true);
         expect(res.body.students.length).toBeGreaterThan(0);
         expect(Object.keys(res.body.students[0]).sort()).toEqual(['child_id', 'student_name', 'wallet_balance']);
         // Türkçe harf duyarsız arama: "MİRA" -> "mira"
         await makeStudent('MİRA Test', 'CARD-SRCH2');
-        const tr = await request(classroomApp).get('/classroom/api/students/search?q=' + encodeURIComponent('mira'));
+        const tr = await classroomAgent.get('/classroom/api/students/search?q=' + encodeURIComponent('mira'));
         expect(tr.body.students.some((s) => s.student_name === 'MİRA Test')).toBe(true);
     });
 });
@@ -268,7 +273,7 @@ describe('okutma akışı — öğrenci seçim yapar', () => {
     test('tablet bekleyen okutmaları görebilir', async () => {
         await makeStudent('Bekleyen Çocuk', 'CARD-PEND');
         const t = await scan('CARD-PEND');
-        const list = await request(classroomApp).get('/classroom/api/pending');
+        const list = await classroomAgent.get('/classroom/api/pending');
         expect(list.body.success).toBe(true);
         expect(list.body.taps.map((x) => x.tap_id)).toContain(t.body.tap_id);
         expect(list.body.taps[0].student_name).toBe('Bekleyen Çocuk');
@@ -281,7 +286,7 @@ describe('okutma akışı — öğrenci seçim yapar', () => {
         await new Promise((r) => setTimeout(r, 15));       // okutmalar arasında zaman farkı
         const sonraki = await scan('CARD-P2');
 
-        const list = await request(classroomApp).get('/classroom/api/pending');
+        const list = await classroomAgent.get('/classroom/api/pending');
         expect(list.body.taps).toHaveLength(2);
         expect(list.body.taps[0].tap_id).toBe(sonraki.body.tap_id);
         expect(list.body.taps[0].student_name).toBe('Sonra Okutan');
@@ -289,29 +294,29 @@ describe('okutma akışı — öğrenci seçim yapar', () => {
 
     test('pasaport onayı ve geri alma puanı yürütür', async () => {
         const child = await makeStudent('Pasaport Çocuk', 'CARD-PAS');
-        const tasks = await request(app).get('/api/tasks');
+        const tasks = await agent.get('/api/tasks');
         const taskId = tasks.body.tasks[0].task_id;
 
-        const c = await request(classroomApp).post('/classroom/api/passport/complete').send({ child_id: child, task_id: taskId });
+        const c = await classroomAgent.post('/classroom/api/passport/complete').send({ child_id: child, task_id: taskId });
         expect(c.body.success).toBe(true);
         expect(c.body.puan).toBe(10);
         expect(c.body.yeni_bakiye).toBe(10);
 
-        const p = await request(classroomApp).get('/classroom/api/passport/' + child);
+        const p = await classroomAgent.get('/classroom/api/passport/' + child);
         expect(p.body.success).toBe(true);
         expect(p.body.student.wallet_balance).toBe(10);
         expect(p.body.tasks.find((t) => t.task_id === taskId).tamamlandi).toBe(true);
 
-        const u = await request(classroomApp).post('/classroom/api/passport/uncomplete').send({ child_id: child, task_id: taskId });
+        const u = await classroomAgent.post('/classroom/api/passport/uncomplete').send({ child_id: child, task_id: taskId });
         expect(u.body.success).toBe(true);
         expect(u.body.yeni_bakiye).toBe(0);
     });
 
     test('sınıf portunda liderlik ve bugün uçları çalışır', async () => {
-        const lead = await request(classroomApp).get('/classroom/api/leaderboard/weekly');
+        const lead = await classroomAgent.get('/classroom/api/leaderboard/weekly');
         expect(lead.body.success).toBe(true);
         expect(Array.isArray(lead.body.leaderboard)).toBe(true);
-        const today = await request(classroomApp).get('/classroom/api/today');
+        const today = await classroomAgent.get('/classroom/api/today');
         expect(today.body.success).toBe(true);
         expect(Array.isArray(today.body.sessions)).toBe(true);
     });

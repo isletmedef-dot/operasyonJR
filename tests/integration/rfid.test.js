@@ -7,7 +7,7 @@
  * open ('AÇIK') session in the logs table.
  */
 const path = require('path');
-const { makeTempDbPath, waitForSchema, openDb, get, all, closeDb } = require('../helpers/db');
+const { makeTempDbPath, waitForSchema, openDb, get, all, closeDb, authedAgent } = require('../helpers/db');
 
 jest.mock('pdf-to-printer', () => ({ print: jest.fn().mockResolvedValue(undefined) }));
 
@@ -20,8 +20,11 @@ const { app, db , drainWrites} = require('../../server.js');
 
 let dbi;
 
+let agent;
+
 beforeAll(async () => {
     await waitForSchema(DB_PATH);
+    agent = await authedAgent(app);
     dbi = openDb(DB_PATH);
 });
 
@@ -32,7 +35,7 @@ afterAll(async () => {
 });
 
 async function createStudent(overrides = {}) {
-    const res = await request(app).post('/api/students/create').send({
+    const res = await agent.post('/api/students/create').send({
         student_name: 'Rfid Çocuk',
         parent_name: 'Rfid Veli',
         parent_phone: '5550001122',
@@ -44,7 +47,7 @@ async function createStudent(overrides = {}) {
     return res.body.child_id;
 }
 
-const scan = (rfid_id) => request(app).post('/api/rfid/scan').send({ rfid_id });
+const scan = (rfid_id) => agent.post('/api/rfid/scan').send({ rfid_id });
 
 describe('RFID card flow', () => {
     test('an unregistered card is rejected', async () => {
@@ -72,7 +75,7 @@ describe('RFID card flow', () => {
         expect(res.body.action).toBe('ENTRY');
 
         // door handler opens the session
-        const started = await request(app).post('/api/entry/start').send({ child_id: childId, personel: 'Rfid Kapı' });
+        const started = await agent.post('/api/entry/start').send({ child_id: childId, personel: 'Rfid Kapı' });
         expect(started.body.success).toBe(true);
 
         const openLog = await get(dbi, "SELECT * FROM logs WHERE child_id = ? AND status = 'AÇIK'", [childId]);
@@ -85,7 +88,7 @@ describe('RFID card flow', () => {
         expect(res.body).toEqual({ success: true, action: 'EXIT', child_id: childId });
 
         // check out, then the next tap is an ENTRY again
-        const fin = await request(app).post('/api/exit/finalize')
+        const fin = await agent.post('/api/exit/finalize')
             .send({ child_id: childId, payment_type: 'NAKİT', personel: 'Rfid Kapı' });
         expect(fin.body.success).toBe(true);
 
@@ -97,7 +100,7 @@ describe('RFID card flow', () => {
         const childId = await createStudent({ student_name: 'Silinen Kart', rfid_id: 'CARD-ORPHAN' });
         expect((await scan('CARD-ORPHAN')).body.child_id).toBe(childId);
 
-        await request(app).post('/api/students/delete').send({ child_id: childId });
+        await agent.post('/api/students/delete').send({ child_id: childId });
 
         const res = await scan('CARD-ORPHAN');
         expect(res.body.success).toBe(false);

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Üreten Çocuk · Giriş</title>
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body {
+      font-family: Arial, sans-serif; margin: 0; min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      background: #111827; color: #fff; padding: 20px;
+    }
+    .kart { width: 100%; max-width: 380px; text-align: center; }
+    .logo { font-size: 13px; letter-spacing: 3px; color: #9ca3af; margin-bottom: 6px; }
+    h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: 1px; }
+    .alt { color: #9ca3af; font-size: 14px; margin: 0 0 22px; }
+    .pin-goster {
+      height: 62px; display: flex; align-items: center; justify-content: center; gap: 14px;
+      background: #1f2937; border-radius: 16px; margin-bottom: 18px;
+    }
+    .nokta { width: 15px; height: 15px; border-radius: 50%; border: 2px solid #4b5563; }
+    .nokta.dolu { background: #22c55e; border-color: #22c55e; }
+    .tuslar { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .tus {
+      padding: 18px 0; font-size: 22px; font-weight: bold; border-radius: 14px;
+      background: #1f2937; color: #fff; border: none; cursor: pointer;
+    }
+    .tus:active { background: #374151; }
+    .tus.bos { background: transparent; cursor: default; }
+    .tus.onay { background: #16a34a; font-size: 15px; }
+    .tus.sil { background: #7f1d1d; font-size: 15px; }
+    button:disabled { opacity: .5; }
+    .hata { min-height: 22px; margin-top: 16px; font-size: 14px; color: #fca5a5; }
+    .kurulum { text-align: left; }
+    .kurulum input {
+      width: 100%; padding: 13px; margin-bottom: 10px; border-radius: 12px;
+      border: 1px solid #374151; background: #1f2937; color: #fff; font-size: 16px;
+    }
+    .kurulum button {
+      width: 100%; padding: 14px; border-radius: 12px; border: none; cursor: pointer;
+      background: #16a34a; color: #fff; font-size: 16px; font-weight: bold;
+    }
+    .ipucu { margin-top: 18px; font-size: 12px; color: #6b7280; }
+  </style>
+</head>
+<body>
+<div class="kart">
+  <div class="logo">ÜRETEN ÇOCUK</div>
+  <h1>Personel Girişi</h1>
+  <p class="alt" id="aciklama">Devam etmek için PIN'inizi girin</p>
+
+  <div id="kurulumAlan" class="kurulum" style="display:none;">
+    <p class="alt" style="margin-bottom:14px;">İlk kurulum: bu cihaz için bir yönetici tanımlayın.</p>
+    <input id="kName" placeholder="Personel adı (örn. PATRON)" autocomplete="off">
+    <input id="kPin" type="password" inputmode="numeric" maxlength="4" placeholder="4 haneli PIN" autocomplete="off">
+    <button onclick="kurulumYap()">KAYDET VE GİRİŞ YAP</button>
+  </div>
+
+  <div id="girisAlan">
+    <div class="pin-goster" id="noktalar">
+      <div class="nokta"></div><div class="nokta"></div><div class="nokta"></div><div class="nokta"></div>
+    </div>
+    <div class="tuslar">
+      <button class="tus" onclick="tus('1')">1</button>
+      <button class="tus" onclick="tus('2')">2</button>
+      <button class="tus" onclick="tus('3')">3</button>
+      <button class="tus" onclick="tus('4')">4</button>
+      <button class="tus" onclick="tus('5')">5</button>
+      <button class="tus" onclick="tus('6')">6</button>
+      <button class="tus" onclick="tus('7')">7</button>
+      <button class="tus" onclick="tus('8')">8</button>
+      <button class="tus" onclick="tus('9')">9</button>
+      <button class="tus sil" onclick="tus('sil')">SİL</button>
+      <button class="tus" onclick="tus('0')">0</button>
+      <button class="tus onay" id="btnGiris" onclick="girisYap()">GİRİŞ</button>
+    </div>
+  </div>
+
+  <div class="hata" id="hata"></div>
+  <div class="ipucu">PIN'inizi bilmiyorsanız yöneticinize başvurun.</div>
+</div>
+
+<script>
+let pin = '';
+let mesgul = false;
+
+const noktalar = () => document.querySelectorAll('#noktalar .nokta');
+const hataYaz = (m) => { document.getElementById('hata').innerText = m || ''; };
+
+function ciz() {
+    noktalar().forEach((n, i) => n.classList.toggle('dolu', i < pin.length));
+}
+
+function tus(t) {
+    if (mesgul) return;
+    if (t === 'sil') pin = pin.slice(0, -1);
+    else if (pin.length < 4) pin += t;
+    ciz();
+    hataYaz('');
+    if (pin.length === 4) girisYap();
+}
+
+// Klavye de çalışsın (kasadaki personel sayı tuşlarını kullanıyor).
+document.addEventListener('keydown', (e) => {
+    if (!document.getElementById('girisAlan') || document.getElementById('girisAlan').style.display === 'none') return;
+    if (e.key >= '0' && e.key <= '9') tus(e.key);
+    else if (e.key === 'Backspace') tus('sil');
+    else if (e.key === 'Enter') girisYap();
+});
+
+async function girisYap() {
+    if (mesgul) return;
+    if (pin.length !== 4) { hataYaz('PIN 4 haneli olmalı.'); return; }
+    mesgul = true;
+    document.getElementById('btnGiris').disabled = true;
+    try {
+        const r = await fetch('/api/auth/login', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pin }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && d.success) { location.href = '/home.html'; return; }
+        hataYaz(d.message || 'Giriş yapılamadı.');
+        pin = ''; ciz();
+    } catch (e) {
+        hataYaz('Sunucuya ulaşılamadı: ' + e.message);
+    }
+    mesgul = false;
+    document.getElementById('btnGiris').disabled = false;
+}
+
+async function kurulumYap() {
+    const name = document.getElementById('kName').value.trim();
+    const kpin = document.getElementById('kPin').value.trim();
+    if (!name) return hataYaz('Personel adı gerekli.');
+    if (kpin.length !== 4) return hataYaz('PIN 4 haneli olmalı.');
+    const r = await fetch('/api/auth/setup', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, pin: kpin }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.success) location.href = '/home.html';
+    else hataYaz(d.message || 'Kurulum yapılamadı.');
+}
+
+// Zaten giriş yapılmışsa doğrudan ana menüye geç; personel hiç tanımlı değilse
+// ilk kurulum formunu göster (aksi halde temiz kurulumda kimse giriş yapamaz).
+fetch('/api/auth/me').then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
+    if (ok && d.success) { location.href = '/home.html'; return; }
+    if (d && d.kurulum_gerekli) {
+        document.getElementById('girisAlan').style.display = 'none';
+        document.getElementById('kurulumAlan').style.display = 'block';
+        document.getElementById('aciklama').innerText = 'Henüz personel tanımlanmamış';
+    }
+}).catch(() => {});
+</script>
+</body>
+</html>

@@ -5,7 +5,7 @@
  * böylece eşitlemenin veritabanına etkisi gerçek kod yolu üzerinden test edilir.
  */
 const path = require('path');
-const { makeTempDbPath, waitForSchema, openDb, get, all, run, closeDb } = require('../helpers/db');
+const { makeTempDbPath, waitForSchema, openDb, get, all, run, closeDb, authedAgent } = require('../helpers/db');
 
 jest.mock('pdf-to-printer', () => ({ print: jest.fn().mockResolvedValue(undefined) }));
 
@@ -17,8 +17,11 @@ const request = require('supertest');
 const { app, db, drainWrites, sheetsLib, applySheetsPlan, resolveSheetStudent, runSheetsSync, appSettings } = require('../../server.js');
 
 let dbi;
+let agent;
+
 beforeAll(async () => {
     await waitForSchema(DB_PATH);
+    agent = await authedAgent(app);
     dbi = openDb(DB_PATH);
 });
 afterAll(async () => {
@@ -32,7 +35,7 @@ const HDR_P = ['Ders Adı', 'Gün', 'Başlangıç', 'Bitiş', 'Kontenjan', 'Duru
 const HDR_K = ['Ad Soyad', 'Kart No', 'Ders Adı', 'Gün', 'Başlangıç', 'Başlangıç Tarihi', 'Bitiş Tarihi', 'Ödeme Tipi', 'Durum', 'Not'];
 
 async function makeStudent(name, rfid = null) {
-    const res = await request(app).post('/api/students/create').send({
+    const res = await agent.post('/api/students/create').send({
         student_name: name, parent_name: 'Veli', parent_phone: '5550000', birth_date: '2016-01-01', rfid_id: rfid,
     });
     expect(res.body.success).toBe(true);
@@ -168,7 +171,7 @@ describe('plan uygulama (e-tablo -> veritabanı)', () => {
     });
 
     test('KASİYERİN elle açtığı kayıtlara eşitleme DOKUNMAZ', async () => {
-        const res = await request(app).post('/api/classes/add').send({ name: 'Elle Açılan Ders', monthly_fee: 800, term_fee: 2400 });
+        const res = await agent.post('/api/classes/add').send({ name: 'Elle Açılan Ders', monthly_fee: 800, term_fee: 2400 });
         expect(res.body.success).toBe(true);
         const manualId = res.body.class_id;
         const before = await get(dbi, 'SELECT * FROM classes WHERE class_id = ?', [manualId]);
@@ -252,7 +255,7 @@ describe('eşitleme ucu', () => {
     });
 
     test('durum ucu eşitleme ayarlarını ve son kayıtları döner', async () => {
-        const res = await request(app).get('/api/sheets/status');
+        const res = await agent.get('/api/sheets/status');
         expect(res.body.success).toBe(true);
         expect(res.body.tabs).toEqual({ dersler: 'Dersler', program: 'Program', kayitlar: 'Kayitlar' });
         expect(res.body.sync_minutes).toBeGreaterThan(0);

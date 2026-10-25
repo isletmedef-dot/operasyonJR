@@ -6,8 +6,7 @@
  */
 const path = require('path');
 const {
-    makeTempDbPath, waitForSchema, openDb, get, all, closeDb, EXPECTED_TABLES, EXPECTED_INDEXES,
-} = require('../helpers/db');
+    makeTempDbPath, waitForSchema, openDb, get, all, closeDb, EXPECTED_TABLES, EXPECTED_INDEXES, authedAgent } = require('../helpers/db');
 
 jest.mock('pdf-to-printer', () => ({ print: jest.fn().mockResolvedValue(undefined) }));
 
@@ -20,8 +19,11 @@ const { app, db , drainWrites} = require('../../server.js');
 
 let dbi;
 
+let agent;
+
 beforeAll(async () => {
     await waitForSchema(DB_PATH);
+    agent = await authedAgent(app);
     dbi = openDb(DB_PATH);
 });
 
@@ -32,7 +34,7 @@ afterAll(async () => {
 });
 
 async function createStudent(overrides = {}) {
-    const res = await request(app).post('/api/students/create').send({
+    const res = await agent.post('/api/students/create').send({
         student_name: 'Test Çocuk',
         parent_name: 'Test Veli',
         parent_phone: '5551234567',
@@ -72,7 +74,7 @@ describe('schema & boot migrations', () => {
     });
 
     test('does not advertise CORS to other origins', async () => {
-        const res = await request(app).get('/api/settings').set('Origin', 'http://evil.example');
+        const res = await agent.get('/api/settings').set('Origin', 'http://evil.example');
         expect(res.status).toBe(200);
         expect(res.headers['access-control-allow-origin']).toBeUndefined();
     });
@@ -95,14 +97,14 @@ describe('schema & boot migrations', () => {
 
 describe('settings', () => {
     test('GET /api/settings reflects the in-memory settings', async () => {
-        const res = await request(app).get('/api/settings');
+        const res = await agent.get('/api/settings');
         expect(res.body.success).toBe(true);
         expect(res.body.settings.base_rate).toBe(300);
         expect(res.body.settings.exit_tolerance_minutes).toBe(5);
     });
 
     test('POST /api/settings/update persists to SQLite and to memory', async () => {
-        const res = await request(app).post('/api/settings/update').send({
+        const res = await agent.post('/api/settings/update').send({
             base_rate: 111, hourly_rate: 222, extra_rate: 33,
             telafi_expiry_days: 10, package_expiry_days: 20, exit_tolerance_minutes: 7,
             telegram_token: '', telegram_chat_id: '',
@@ -114,7 +116,7 @@ describe('settings', () => {
         const tol = await get(dbi, "SELECT value FROM settings WHERE key = 'exit_tolerance_minutes'");
         expect(Number(tol.value)).toBe(7);
 
-        const after = await request(app).get('/api/settings');
+        const after = await agent.get('/api/settings');
         expect(after.body.settings.base_rate).toBe(111);
         expect(after.body.settings.exit_tolerance_minutes).toBe(7);
     });
@@ -143,7 +145,7 @@ describe('students table', () => {
     });
 
     test('GET /api/students returns rows enriched with age and a formatted date', async () => {
-        const res = await request(app).get('/api/students');
+        const res = await agent.get('/api/students');
         expect(res.body.success).toBe(true);
         expect(res.body.students.length).toBeGreaterThan(0);
         const s = res.body.students[0];
@@ -155,10 +157,10 @@ describe('students table', () => {
     test('search matches by name and parent phone, case-insensitively', async () => {
         const id = await createStudent({ student_name: 'Aranan Çocuk', parent_phone: '5998877665' });
 
-        const byName = await request(app).get('/api/students/search').query({ q: 'aranan' });
+        const byName = await agent.get('/api/students/search').query({ q: 'aranan' });
         expect(byName.body.students.map((s) => s.child_id)).toContain(id);
 
-        const byPhone = await request(app).get('/api/students/search').query({ q: '5998877665' });
+        const byPhone = await agent.get('/api/students/search').query({ q: '5998877665' });
         expect(byPhone.body.students.map((s) => s.child_id)).toContain(id);
     });
 
@@ -166,13 +168,13 @@ describe('students table', () => {
         // The route lower-cases the whole query before using it, so the `rfid_id = ?`
         // comparison only matches cards that happen to be stored in lower case.
         const id = await createStudent({ student_name: 'Kart Arama Çocuk', rfid_id: 'CARD-FIND' });
-        const res = await request(app).get('/api/students/search').query({ q: 'CARD-FIND' });
+        const res = await agent.get('/api/students/search').query({ q: 'CARD-FIND' });
         expect(res.body.students.map((s) => s.child_id)).toContain(id);
     });
 
     test('GET /api/students/get/:id reports an empty rights summary when outside', async () => {
         const id = await createStudent({ student_name: 'Profil Çocuk' });
-        const res = await request(app).get(`/api/students/get/${id}`);
+        const res = await agent.get(`/api/students/get/${id}`);
         expect(res.body.success).toBe(true);
         expect(res.body.student.inside).toBe(false);
         expect(res.body.student.entry_time).toBeNull();
@@ -182,20 +184,20 @@ describe('students table', () => {
 
     test('GET /api/students/get/:id reports inside=true during a session', async () => {
         const id = await createStudent({ student_name: 'İçeride Çocuk' });
-        await request(app).post('/api/entry/start').send({ child_id: id, personel: 'Test' });
-        const res = await request(app).get(`/api/students/get/${id}`);
+        await agent.post('/api/entry/start').send({ child_id: id, personel: 'Test' });
+        const res = await agent.get(`/api/students/get/${id}`);
         expect(res.body.student.inside).toBe(true);
         expect(res.body.student.entry_time).toMatch(/^\d{2}:\d{2}$/);
     });
 
     test('unknown child_id is reported as not found', async () => {
-        const res = await request(app).get('/api/students/get/UC-999999');
+        const res = await agent.get('/api/students/get/UC-999999');
         expect(res.body).toEqual({ success: false, message: 'Öğrenci bulunamadı.' });
     });
 
     test('edit updates the row and provisions a telafi right', async () => {
         const id = await createStudent({ student_name: 'Eski Ad' });
-        const res = await request(app).post('/api/students/edit').send({
+        const res = await agent.post('/api/students/edit').send({
             child_id: id, student_name: 'Yeni Ad', parent_name: 'Yeni Veli', parent_phone: '5000000000',
             birth_date: '2018-02-02', rfid_id: 'CARD-EDIT', note: 'not', cari_turu: 'Oyun Alanı',
             telafi_minutes: 90, package_minutes: 0, telafi_dersi_count: 0,
@@ -221,8 +223,8 @@ describe('students table', () => {
             birth_date: '2018-02-02', rfid_id: null, note: '', cari_turu: 'Oyun',
             telafi_minutes: minutes, package_minutes: 0, telafi_dersi_count: 0,
         });
-        await request(app).post('/api/students/edit').send(payload(60));
-        await request(app).post('/api/students/edit').send(payload(45));
+        await agent.post('/api/students/edit').send(payload(60));
+        await agent.post('/api/students/edit').send(payload(45));
 
         const rights = await all(dbi, "SELECT * FROM rights WHERE child_id = ? AND hak_tipi = 'TELAFİ'", [id]);
         expect(rights).toHaveLength(1);
@@ -232,7 +234,7 @@ describe('students table', () => {
 
     test('editing can provision a package and makeup-lesson count', async () => {
         const id = await createStudent({ student_name: 'Paketli Çocuk' });
-        await request(app).post('/api/students/edit').send({
+        await agent.post('/api/students/edit').send({
             child_id: id, student_name: 'Paketli Çocuk', parent_name: 'V', parent_phone: '5',
             birth_date: '2018-02-02', rfid_id: null, note: '', cari_turu: 'Oyun',
             telafi_minutes: 0, package_minutes: 250, telafi_dersi_count: 2,
@@ -249,14 +251,14 @@ describe('students table', () => {
 
     test('delete removes the student and cascades to logs, rights and movements', async () => {
         const id = await createStudent({ student_name: 'Silinecek Çocuk', rfid_id: 'CARD-DEL' });
-        await request(app).post('/api/rights/add-telafi').send({ child_id: id, minutes: 30, personel: 'Test' });
-        await request(app).post('/api/entry/start').send({ child_id: id, personel: 'Test' });
+        await agent.post('/api/rights/add-telafi').send({ child_id: id, minutes: 30, personel: 'Test' });
+        await agent.post('/api/entry/start').send({ child_id: id, personel: 'Test' });
 
         expect(await countFor('logs', id)).toBeGreaterThan(0);
         expect(await countFor('rights', id)).toBeGreaterThan(0);
         expect(await countFor('right_movements', id)).toBeGreaterThan(0);
 
-        const del = await request(app).post('/api/students/delete').send({ child_id: id });
+        const del = await agent.post('/api/students/delete').send({ child_id: id });
         expect(del.body.success).toBe(true);
 
         expect(await countFor('students', id)).toBe(0);
@@ -266,42 +268,53 @@ describe('students table', () => {
     });
 
     test('delete without a child_id is rejected', async () => {
-        const res = await request(app).post('/api/students/delete').send({});
+        const res = await agent.post('/api/students/delete').send({});
         expect(res.body).toEqual({ success: false, message: 'Geçersiz öğrenci ID.' });
     });
 });
 
 describe('staff table', () => {
     test('add / verify / delete round-trips through SQLite', async () => {
-        const add = await request(app).post('/api/staff/add').send({ pin: '1234', name: 'Ayşe' });
+        // Giriş yapan personelin PIN'inden farklı bir numara seçilir; aynı PIN kaydı
+        // güncellediği için oturum sahibini değiştirmemek adına ayrı PIN kullanılır.
+        const add = await agent.post('/api/staff/add').send({ pin: '4321', name: 'Ayşe' });
         expect(add.body.success).toBe(true);
 
-        const row = await get(dbi, 'SELECT * FROM staff WHERE pin = ?', ['1234']);
+        // PIN düz metin SAKLANMAZ: satır kimlikle bulunur, yalnızca özet kolonları vardır.
+        const row = await get(dbi, 'SELECT * FROM staff WHERE id = ?', [add.body.id]);
         expect(row.name).toBe('Ayşe');
+        expect(row.pin_hash).toBeTruthy();
+        expect(row.pin_salt).toBeTruthy();
+        expect(row.pin).toBeUndefined();
+        expect(JSON.stringify(row)).not.toContain('4321');
 
-        const ok = await request(app).post('/api/staff/verify').send({ pin: '1234' });
+        const ok = await agent.post('/api/staff/verify').send({ pin: '4321' });
         expect(ok.body).toEqual({ success: true, name: 'Ayşe' });
 
-        const bad = await request(app).post('/api/staff/verify').send({ pin: '0000' });
+        const bad = await agent.post('/api/staff/verify').send({ pin: '0000' });
         expect(bad.body.success).toBe(false);
 
-        await request(app).post('/api/staff/delete').send({ pin: '1234' });
-        expect(await get(dbi, 'SELECT * FROM staff WHERE pin = ?', ['1234'])).toBeUndefined();
+        await agent.post('/api/staff/delete').send({ id: add.body.id });
+        expect(await get(dbi, 'SELECT * FROM staff WHERE id = ?', [add.body.id])).toBeUndefined();
     });
 
     test('rejects a PIN that is not exactly 4 digits', async () => {
-        const short = await request(app).post('/api/staff/add').send({ pin: '12', name: 'Kısa' });
+        const short = await agent.post('/api/staff/add').send({ pin: '12', name: 'Kısa' });
         expect(short.body.success).toBe(false);
-        const long = await request(app).post('/api/staff/add').send({ pin: '12345', name: 'Uzun' });
+        const long = await agent.post('/api/staff/add').send({ pin: '12345', name: 'Uzun' });
         expect(long.body.success).toBe(false);
-        const noName = await request(app).post('/api/staff/add').send({ pin: '4321', name: '' });
+        const noName = await agent.post('/api/staff/add').send({ pin: '4321', name: '' });
         expect(noName.body.success).toBe(false);
     });
 
-    test('re-adding the same PIN upserts instead of duplicating', async () => {
-        await request(app).post('/api/staff/add').send({ pin: '7777', name: 'İlk' });
-        await request(app).post('/api/staff/add').send({ pin: '7777', name: 'Son' });
-        const rows = await all(dbi, 'SELECT * FROM staff WHERE pin = ?', ['7777']);
+    test('re-adding the same PIN updates that staff member instead of duplicating', async () => {
+        const ilk = await agent.post('/api/staff/add').send({ pin: '7777', name: 'İlk' });
+        const son = await agent.post('/api/staff/add').send({ pin: '7777', name: 'Son' });
+        expect(son.body.success).toBe(true);
+        expect(son.body.guncellendi).toBe(true);            // yeni satır değil, güncelleme
+        expect(son.body.id).toBe(ilk.body.id);
+        // PIN tek bir kişiyi tanımlamalı; aksi halde işlem kaydı yanlış kişiye yazılır.
+        const rows = await all(dbi, 'SELECT * FROM staff WHERE name IN (?, ?)', ['İlk', 'Son']);
         expect(rows).toHaveLength(1);
         expect(rows[0].name).toBe('Son');
     });
@@ -309,17 +322,17 @@ describe('staff table', () => {
 
 describe('bonus packages table', () => {
     test('add / list / delete', async () => {
-        const add = await request(app).post('/api/bonus-packages/add').send({ sales: 1000, bonus: 100 });
+        const add = await agent.post('/api/bonus-packages/add').send({ sales: 1000, bonus: 100 });
         expect(add.body.success).toBe(true);
 
         const row = await get(dbi, 'SELECT * FROM bonus_packages WHERE sales_amount = 1000');
         expect(row.bonus_amount).toBe(100);
 
-        const list = await request(app).get('/api/bonus-packages');
+        const list = await agent.get('/api/bonus-packages');
         expect(list.body.success).toBe(true);
         expect(list.body.packages.length).toBeGreaterThan(0);
 
-        const del = await request(app).post('/api/bonus-packages/delete').send({ id: row.id });
+        const del = await agent.post('/api/bonus-packages/delete').send({ id: row.id });
         expect(del.body.success).toBe(true);
         expect(await get(dbi, 'SELECT * FROM bonus_packages WHERE id = ?', [row.id])).toBeUndefined();
     });
@@ -328,7 +341,7 @@ describe('bonus packages table', () => {
 describe('rights & movement ledger', () => {
     test('add-telafi writes the right and a Tanımlama movement', async () => {
         const id = await createStudent({ student_name: 'Ledger Çocuk' });
-        const res = await request(app).post('/api/rights/add-telafi')
+        const res = await agent.post('/api/rights/add-telafi')
             .send({ child_id: id, minutes: 120, source: 'Test Kaynağı', note: 'not', personel: 'Test' });
         expect(res.body.success).toBe(true);
 
@@ -348,7 +361,7 @@ describe('rights & movement ledger', () => {
 
     test('add-package splits principal and bonus balance', async () => {
         const id = await createStudent({ student_name: 'Paket Satış' });
-        const res = await request(app).post('/api/rights/add-package')
+        const res = await agent.post('/api/rights/add-package')
             .send({ child_id: id, price: 300, bonus: 50, payment_type: 'NAKİT', personel: 'Test' });
         expect(res.body.success).toBe(true);
 
@@ -362,17 +375,17 @@ describe('rights & movement ledger', () => {
 
     test('add-package with a zero total is rejected', async () => {
         const id = await createStudent({ student_name: 'Sıfır Paket' });
-        const res = await request(app).post('/api/rights/add-package').send({ child_id: id, price: 0, bonus: 0 });
+        const res = await agent.post('/api/rights/add-package').send({ child_id: id, price: 0, bonus: 0 });
         expect(res.body.success).toBe(false);
         expect(await countFor('rights', id)).toBe(0);
     });
 
     test('rights/get returns balances and a formatted movement history', async () => {
         const id = await createStudent({ student_name: 'Hareket Çocuk' });
-        await request(app).post('/api/rights/add-telafi').send({ child_id: id, minutes: 60 });
-        await request(app).post('/api/rights/add-package').send({ child_id: id, price: 100, bonus: 0 });
+        await agent.post('/api/rights/add-telafi').send({ child_id: id, minutes: 60 });
+        await agent.post('/api/rights/add-package').send({ child_id: id, price: 100, bonus: 0 });
 
-        const res = await request(app).get(`/api/rights/get/${id}`);
+        const res = await agent.get(`/api/rights/get/${id}`);
         expect(res.body.success).toBe(true);
         expect(res.body.telafi_minutes).toBe(60);
         expect(res.body.package_minutes).toBe(100);

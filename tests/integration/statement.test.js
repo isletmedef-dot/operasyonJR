@@ -4,7 +4,7 @@
  * sonra kalan bakiye. Döküm tarayıcıdan yazdırılır; burada veri doğruluğu test edilir.
  */
 const path = require('path');
-const { makeTempDbPath, waitForSchema, openDb, get, all, run, closeDb } = require('../helpers/db');
+const { makeTempDbPath, waitForSchema, openDb, get, all, run, closeDb, authedAgent } = require('../helpers/db');
 
 jest.mock('pdf-to-printer', () => ({ print: jest.fn().mockResolvedValue(undefined) }));
 
@@ -16,8 +16,11 @@ const request = require('supertest');
 const { app, db, drainWrites } = require('../../server.js');
 
 let dbi;
+let agent;
+
 beforeAll(async () => {
     await waitForSchema(DB_PATH);
+    agent = await authedAgent(app);
     dbi = openDb(DB_PATH);
 });
 afterAll(async () => {
@@ -27,7 +30,7 @@ afterAll(async () => {
 });
 
 async function makeStudent(name) {
-    const res = await request(app).post('/api/students/create').send({
+    const res = await agent.post('/api/students/create').send({
         student_name: name, parent_name: 'Veli Adı', parent_phone: '5551112233', birth_date: '2016-05-10',
     });
     expect(res.body.success).toBe(true);
@@ -35,7 +38,7 @@ async function makeStudent(name) {
 }
 
 async function openSession(childId, minutesAgo) {
-    const started = await request(app).post('/api/entry/start').send({ child_id: childId, personel: 'Test' });
+    const started = await agent.post('/api/entry/start').send({ child_id: childId, personel: 'Test' });
     expect(started.body.success).toBe(true);
     const log = await get(dbi, "SELECT * FROM logs WHERE child_id = ? AND status = 'AÇIK'", [childId]);
     await run(dbi, 'UPDATE logs SET entry_time = ? WHERE log_id = ?',
@@ -44,9 +47,9 @@ async function openSession(childId, minutesAgo) {
 }
 
 const checkout = (child_id, body = {}) =>
-    request(app).post('/api/exit/finalize').send({ child_id, payment_type: 'NAKİT', personel: 'Kasa', ...body });
+    agent.post('/api/exit/finalize').send({ child_id, payment_type: 'NAKİT', personel: 'Kasa', ...body });
 
-const statement = (child_id) => request(app).get('/api/students/statement/' + child_id);
+const statement = (child_id) => agent.get('/api/students/statement/' + child_id);
 
 describe('hareket dökümü (ekstre)', () => {
     test('ziyaretler ücret ve çıkış saatiyle listelenir', async () => {
@@ -100,7 +103,7 @@ describe('hareket dökümü (ekstre)', () => {
     test('paketten düşülen ziyarette nakit tutar sıfır, kalan bakiye dolu', async () => {
         const child = await makeStudent('Ekstre Paket');
         // 600 dk paket tanımla
-        const hak = await request(app).post('/api/rights/add').send({
+        const hak = await agent.post('/api/rights/add').send({
             child_id: child, hak_tipi: 'PAKET', miktar_dk: 600, satis_tutari: 600, kaynak: '600 TL Paket',
         });
         if (hak.body && hak.body.success === false) return;      // uç yoksa bu test atlanır
@@ -139,7 +142,7 @@ describe('hareket dökümü (ekstre)', () => {
     test('iptal edilmiş (VAZGEÇTİ) ziyaretler de dökümde görünür', async () => {
         const child = await makeStudent('Ekstre İptal');
         await openSession(child, 60);
-        await request(app).post('/api/exit/finalize').send({
+        await agent.post('/api/exit/finalize').send({
             child_id: child, payment_type: 'VAZGEÇTİ', cancel_reason: 'Test iptali', personel: 'Kasa',
         });
         const st = await statement(child);

@@ -11,6 +11,7 @@ const path = require('path');
 const fs = require('fs');
 const ptp = require('pdf-to-printer');
 const sheetsLib = require('./lib/sheets');
+const auth = require('./lib/auth');
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
@@ -55,6 +56,14 @@ function sendTelegramNotification(message) {
 // Arayüz aynı Express sunucusundan servis ediliyor (sayfalar göreli URL kullanıyor), yani CORS
 // gerekmiyor. Önceden app.use(cors()) API'yi ağdaki her kaynağa açıyordu.
 app.use(express.json());
+// Ters vekil (Cloudflare Tunnel vb.) arkasındayken gerçek istemci IP'sini görmek için.
+// Varsayılan kapalı: X-Forwarded-For'a koşulsuz güvenmek deneme sınırını atlatılabilir yapar.
+if (process.env.TRUST_PROXY === '1') app.set('trust proxy', true);
+
+// Giriş kapısı. Bugüne kadar PIN kontrolü yalnızca tarayıcıda olduğu için ağdaki herkes
+// tüm veriyi okuyup değiştirebiliyordu. Adres internete açıldığında bu kabul edilemez:
+// oturumu olmayan istemciye sayfa yerine giriş ekranı, API için 401 döner.
+app.use(requireSession);
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Terminal başında kimse olmadığı için süreç ölmüyor; ama hata sessizce yutulmuyor.
@@ -86,7 +95,12 @@ const SETTING_DEFAULTS = {
     sheets_sync_minutes: 5,          // eşitleme aralığı (dakika)
     sheets_tab_dersler: 'Dersler',
     sheets_tab_program: 'Program',
-    sheets_tab_kayitlar: 'Kayitlar'
+    sheets_tab_kayitlar: 'Kayitlar',
+
+    // --- Oturum davranışı ---
+    // 0: oturum açan personel adına işlem yazılır (girişten sonra PIN tekrar sorulmaz).
+    // 1: eski davranış — her yetki gerektiren işlemde tekrar PIN sorulur.
+    tekrar_pin_sor: 0
 };
 // Bunların varsayılanı veritabanına yazılmaz, sadece okunur.
 const SETTING_OPTIONAL = [
@@ -142,6 +156,9 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS bonus_packages (id INTEGER PRIMARY KEY AUTOINCREMENT, sales_amount REAL, bonus_amount REAL)`);
     db.run(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`);
     db.run(`CREATE TABLE IF NOT EXISTS staff (pin TEXT PRIMARY KEY, name TEXT)`);
+    // Personel oturumları. Çerez yalnızca opak bir jeton taşır; kayıt sunucuda olduğu için
+    // oturum tek taraflı iptal edilebilir. ('sessions' adı ders saatleri için kullanılıyor.)
+    db.run(`CREATE TABLE IF NOT EXISTS oturumlar (token TEXT PRIMARY KEY, personel TEXT, olusturma TEXT, son_gorulme TEXT, bitis TEXT, ip TEXT, tarayici TEXT)`);
 
     // Şema migrasyonları ve indeksler, tablolar oluşturulduktan SONRA uygulanır (aşağıya bakınız).
 
@@ -268,6 +285,11 @@ db.serialize(() => {
         db.run(`CREATE INDEX IF NOT EXISTS idx_sync_log_tarih ON sheets_sync_log (tarih)`);
     });
 });
+
+// Personel PIN'leri düz metin saklanmaz. Eski kurulumlarda staff tablosu
+// (pin TEXT PRIMARY KEY, name TEXT) biçimindeydi; burada BİR KEZ özetli biçime taşınır ve
+// personel aynı PIN ile giriş yapmaya devam eder. Giriş uçları bu sözü bekler.
+const personelHazir = personelSifreMigrasyonu();
 
 // --- Söz (promise) tabanlı veritabanı yardımcıları ---
 // Çok adımlı yazma işlemlerini düz async/await koduyla yazabilmek için.
@@ -636,32 +658,189 @@ app.post('/api/bonus-packages/delete', (req, res) => {
         .catch(err => res.json({ success: false, message: err.message }));
 });
 
+// --- Personel kimliği ve oturum yardımcıları -------------------------------------------
+// Giriş kapısından muaf yollar: giriş ekranı ve oturum betiği olmadan kimse giriş yapamaz.
+const ACIK_YOLLAR = new Set(['/login.html', '/oturum.js', '/favicon.ico',
+    '/api/auth/login', '/api/auth/logout', '/api/auth/me', '/api/auth/setup']);
+
+async function personelOzetUret(pin) {
+    const tuz = auth.yeniTuz();
+    return { tuz, ozet: await auth.pinOzetle(pin, tuz) };
+}
+
+// Hatalı denemeler sınırlandırılır: 4 haneli PIN'in tek başına koruması yoktur.
+async function personelDogrula(req, pin) {
+    await personelHazir;
+    const anahtar = String((req && req.ip) || 'yerel');
+    const kilit = auth.kilitDurumu(anahtar);
+    if (kilit.kilitli) {
+        return { ok: false, kilitli: true, message: 'Çok fazla hatalı deneme. ' + kilit.dakika + ' dakika sonra tekrar deneyin.' };
+    }
+    const satirlar = await dbAll(`SELECT id, name, pin_hash, pin_salt, pin_uzunluk FROM staff`);
+    const eslesen = await auth.pinDogrula(pin, satirlar);
+    auth.denemeKaydet(anahtar, !!eslesen);
+    if (!eslesen) return { ok: false, message: 'Hatalı veya yetkisiz PIN!' };
+    return { ok: true, name: eslesen.name };
+}
+
+// Yerel ağda http kullanıldığı için Secure çerez yalnızca gerçekten HTTPS geldiğinde eklenir;
+// aksi halde tarayıcı çerezi hiç göndermez ve giriş yapılamaz.
+function istekGuvenli(req) {
+    const proto = String(req.get('x-forwarded-proto') || '').split(',')[0].trim();
+    return !!req.secure || proto === 'https';
+}
+
+async function oturumAc(req, res, personel) {
+    const jeton = auth.yeniJeton();
+    const simdi = new Date();
+    const bitis = new Date(simdi.getTime() + auth.OTURUM_SAAT * 3600 * 1000);
+    await withWriteLock(() => dbRun(`INSERT INTO oturumlar (token, personel, olusturma, son_gorulme, bitis, ip, tarayici) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [jeton, personel, simdi.toISOString(), simdi.toISOString(), bitis.toISOString(),
+            String(req.ip || ''), String(req.get('user-agent') || '').slice(0, 200)]));
+    auth.cookieYaz(res, jeton, auth.OTURUM_SAAT * 3600, istekGuvenli(req));
+    return jeton;
+}
+
+async function oturumBul(req) {
+    const jeton = auth.cookieOku(req, auth.COOKIE_ADI);
+    if (!jeton) return null;
+    const s = await dbGet(`SELECT * FROM oturumlar WHERE token = ?`, [jeton]);
+    if (!s) return null;
+    if (s.bitis && new Date(s.bitis).getTime() < Date.now()) {
+        try { await dbRun(`DELETE FROM oturumlar WHERE token = ?`, [jeton]); } catch (e) {}
+        return null;
+    }
+    return s;
+}
+
+// Kapı: oturumu olmayan istemciye sayfa yerine giriş ekranı, API için 401 döner.
+function requireSession(req, res, next) {
+    const yol = String(req.path || '');
+    if (ACIK_YOLLAR.has(yol)) return next();
+    oturumBul(req).then((s) => {
+        if (s) return next();
+        if (yol.startsWith('/api/')) {
+            return res.status(401).json({ success: false, kod: 'OTURUM_YOK', message: 'Oturum gerekli. Lütfen giriş yapın.' });
+        }
+        return res.redirect('/login.html');
+    }).catch(() => res.status(500).json({ success: false, message: 'Oturum doğrulanamadı.' }));
+}
+
+// Giriş/çıkış uçları iki arayüzde de bulunur (kasa ve sınıf ayrı portlarda çalışıyor).
+function authUclari(sunucu) {
+    sunucu.post('/api/auth/login', async (req, res) => {
+        const sonuc = await personelDogrula(req, (req.body || {}).pin);
+        if (!sonuc.ok) return res.status(401).json({ success: false, message: sonuc.message });
+        await oturumAc(req, res, sonuc.name);
+        res.json({ success: true, name: sonuc.name });
+    });
+
+    sunucu.post('/api/auth/logout', async (req, res) => {
+        const jeton = auth.cookieOku(req, auth.COOKIE_ADI);
+        if (jeton) { try { await dbRun(`DELETE FROM oturumlar WHERE token = ?`, [jeton]); } catch (e) {} }
+        auth.cookieSil(res);
+        res.json({ success: true });
+    });
+
+    sunucu.get('/api/auth/me', async (req, res) => {
+        const s = await oturumBul(req);
+        const tekrarPin = Number(appSettings.tekrar_pin_sor || 0);
+        if (!s) {
+            // Personel tanımlı değilse giriş ekranı ilk kurulum formunu gösterir.
+            const mevcut = await dbAll(`SELECT id FROM staff LIMIT 1`).catch(() => []);
+            return res.status(401).json({ success: false, kurulum_gerekli: mevcut.length === 0 });
+        }
+        res.json({ success: true, name: s.personel, bitis: s.bitis, tekrar_pin: tekrarPin });
+    });
+
+    // İlk kurulum: yalnızca personel tablosu boşken çalışır. Aksi halde temiz bir
+    // kurulumda kimse giriş yapamaz ve uygulama kilitlenirdi.
+    sunucu.post('/api/auth/setup', async (req, res) => {
+        await personelHazir;
+        const mevcut = await dbAll(`SELECT id FROM staff LIMIT 1`);
+        if (mevcut.length) return res.status(400).json({ success: false, message: 'Kurulum zaten yapılmış. Giriş yapın.' });
+        const { name, pin } = req.body || {};
+        if (!name || !pin || String(pin).length !== 4) {
+            return res.status(400).json({ success: false, message: 'Geçerli isim ve 4 haneli PIN girin.' });
+        }
+        const { ozet, tuz } = await personelOzetUret(pin);
+        await withWriteLock(() => dbRun(`INSERT INTO staff (name, pin_hash, pin_salt, pin_uzunluk, olusturma) VALUES (?, ?, ?, ?, ?)`,
+            [name, ozet, tuz, String(pin).length, new Date().toISOString()]));
+        await oturumAc(req, res, name);
+        res.json({ success: true, name });
+    });
+}
+
+// Eski kurulumlarda PIN'ler düz metindi (staff.pin). Bir kez özete çevrilir; personel aynı
+// PIN ile giriş yapmaya devam eder. Zaten taşınmışsa hiçbir şey yapmaz (idempotent).
+async function personelSifreMigrasyonu() {
+    try {
+        const kolonlar = await dbAll(`PRAGMA table_info(staff)`);
+        if (kolonlar.map((c) => c.name).includes('pin_hash')) return;      // yeni biçim
+        const eski = await dbAll(`SELECT pin, name FROM staff`);
+        await dbRun(`CREATE TABLE IF NOT EXISTS staff_yeni (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, pin_hash TEXT NOT NULL, pin_salt TEXT NOT NULL, pin_uzunluk INTEGER DEFAULT 4, olusturma TEXT)`);
+        for (const r of eski) {
+            const pin = String(r.pin == null ? '' : r.pin);
+            const tuz = auth.yeniTuz();
+            const ozet = await auth.pinOzetle(pin, tuz);
+            await dbRun(`INSERT INTO staff_yeni (name, pin_hash, pin_salt, pin_uzunluk, olusturma) VALUES (?, ?, ?, ?, ?)`,
+                [r.name || 'Personel', ozet, tuz, pin.length || 4, new Date().toISOString()]);
+        }
+        await dbRun(`DROP TABLE staff`);
+        await dbRun(`ALTER TABLE staff_yeni RENAME TO staff`);
+        if (eski.length) console.log('[personel] PIN kayıtları özetli biçime taşındı: ' + eski.length + ' kayıt');
+    } catch (e) {
+        console.error('[personel] PIN migrasyonu hatası:', e.message);
+    }
+}
+
 app.get('/api/staff', (req, res) => {
-    db.all(`SELECT pin, name FROM staff`, (err, rows) => {
+    // PIN'lerin özetleri bile istemciye gönderilmez; yalnızca kimlik ve ad döner.
+    db.all(`SELECT id, name, pin_uzunluk FROM staff ORDER BY name`, (err, rows) => {
         res.json({ success: true, staff: rows || [] });
     });
 });
 
-app.post('/api/staff/add', (req, res) => {
+app.post('/api/staff/add', async (req, res) => {
     const { pin, name } = req.body;
-    if (!pin || pin.length !== 4 || !name) return res.json({ success: false, message: "Geçerli isim ve 4 haneli PIN girin." });
-    withWriteLock(() => dbRun(`INSERT OR REPLACE INTO staff (pin, name) VALUES (?, ?)`, [pin, name]))
-        .then(() => res.json({ success: true, message: "Personel başarıyla kaydedildi." }))
-        .catch(err => res.json({ success: false, message: err.message }));
+    if (!pin || String(pin).length !== 4 || !name) return res.json({ success: false, message: "Geçerli isim ve 4 haneli PIN girin." });
+    try {
+        await personelHazir;
+        const { ozet, tuz } = await personelOzetUret(pin);
+        // Eski kurulumda PIN birincil anahtardı, yani aynı PIN'i yeniden tanımlamak kaydı
+        // GÜNCELLERDİ. Özetli saklamada bu kendiliğinden kaybolur; o yüzden burada açıkça
+        // korunur: aynı PIN başka bir personelde varsa yeni satır açılmaz, adı güncellenir.
+        // (Aksi halde bir PIN iki kişiye ait olur ve işlem kaydı yanlış kişiye yazılır.)
+        const mevcut = await dbAll(`SELECT id, name, pin_hash, pin_salt, pin_uzunluk FROM staff`);
+        const cakisan = await auth.pinDogrula(pin, mevcut);
+        if (cakisan) {
+            await withWriteLock(() => dbRun(`UPDATE staff SET name = ?, pin_hash = ?, pin_salt = ?, pin_uzunluk = ? WHERE id = ?`,
+                [name, ozet, tuz, String(pin).length, cakisan.id]));
+            return res.json({ success: true, id: cakisan.id, guncellendi: true, message: "Personel güncellendi." });
+        }
+        const sonuc = await withWriteLock(() => dbRun(`INSERT INTO staff (name, pin_hash, pin_salt, pin_uzunluk, olusturma) VALUES (?, ?, ?, ?, ?)`,
+            [name, ozet, tuz, String(pin).length, new Date().toISOString()]));
+        res.json({ success: true, id: sonuc.lastID, message: "Personel başarıyla kaydedildi." });
+    } catch (err) { res.json({ success: false, message: err.message }); }
 });
 
 app.post('/api/staff/delete', (req, res) => {
-    withWriteLock(() => dbRun(`DELETE FROM staff WHERE pin = ?`, [req.body.pin]))
+    const id = Number(req.body.id);
+    if (!id) return res.json({ success: false, message: "Silinecek personel belirtilmedi." });
+    withWriteLock(() => dbRun(`DELETE FROM staff WHERE id = ?`, [id]))
         .then(() => res.json({ success: true }))
         .catch(err => res.json({ success: false, message: err.message }));
 });
 
-app.post('/api/staff/verify', (req, res) => {
-    db.get(`SELECT name FROM staff WHERE pin = ?`, [req.body.pin], (err, row) => {
-        if (row) res.json({ success: true, name: row.name });
-        else res.json({ success: false, message: "Hatalı veya yetkisiz PIN!" });
-    });
+// Sayfa içi yetki doğrulaması (işlem kaydı için personel adı). Uç artık oturum ister:
+// eskiden PIN'i bilen herkese isim döndürüyor ve ağdan sınırsız PIN denenmesine izin veriyordu.
+app.post('/api/staff/verify', async (req, res) => {
+    const sonuc = await personelDogrula(req, req.body.pin);
+    if (sonuc.ok) res.json({ success: true, name: sonuc.name });
+    else res.json({ success: false, message: sonuc.message });
 });
+
+authUclari(app);
 
 app.get('/api/settings', (req, res) => res.json({ success: true, settings: appSettings }));
 
@@ -1912,6 +2091,27 @@ const classroomApp = express();
 classroomApp.use(express.json());
 classroomApp.disable('x-powered-by');
 
+// Sınıf arayüzü de oturum ister. Tek istisna okutma ucu: RFID cihazı kendi jetonuyla
+// gönderebilir, tablet ise oturumlu tarayıcıdan gönderir (ikisinden biri yeterli).
+classroomApp.get('/login.html', (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
+classroomApp.get('/oturum.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'oturum.js')));
+
+classroomApp.use((req, res, next) => {
+    const yol = String(req.path || '');
+    if (ACIK_YOLLAR.has(yol)) return next();
+    if (yol === '/classroom/rfid/scan' && classroomAuthorized(req)) return next();
+    oturumBul(req).then((s) => {
+        if (s) return next();
+        if (yol.startsWith('/classroom/api') || yol.startsWith('/api/')) {
+            return res.status(401).json({ success: false, kod: 'OTURUM_YOK', message: 'Oturum gerekli. Lütfen giriş yapın.' });
+        }
+        return res.redirect('/login.html');
+    }).catch(() => res.status(500).json({ success: false, message: 'Oturum doğrulanamadı.' }));
+});
+
+// Giriş/çıkış uçları sınıf portunda da bulunmalı: tablet kendi portundan giriş yapar.
+authUclari(classroomApp);
+
 // Bekleyen okutmalar: tablet "Ders / Oyun Alanı" seçimini yapana kadar burada durur.
 const pendingTaps = new Map();
 
@@ -2556,6 +2756,9 @@ module.exports = {
     dbAll,
     // ders / pasaport yardımcıları (testler için)
     localDateStr,
+    // oturum katmanı (testler için): migrasyonun tekrar çalıştırılabilir olduğu doğrulanır
+    personelSifreMigrasyonu,
+    authUclari,
     dayOfWeek,
     minutesOf,
     registrationCoversDate,

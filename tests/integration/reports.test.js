@@ -5,7 +5,7 @@
  * payment_type üzerinden yapılmalıdır — bu testler tam olarak onu doğrular.
  */
 const path = require('path');
-const { makeTempDbPath, waitForSchema, openDb, get, run, closeDb } = require('../helpers/db');
+const { makeTempDbPath, waitForSchema, openDb, get, run, closeDb, authedAgent } = require('../helpers/db');
 
 jest.mock('pdf-to-printer', () => ({ print: jest.fn().mockResolvedValue(undefined) }));
 
@@ -17,8 +17,11 @@ const request = require('supertest');
 const { app, db, drainWrites, reportTotals, logDurum } = require('../../server.js');
 
 let dbi;
+let agent;
+
 beforeAll(async () => {
     await waitForSchema(DB_PATH);
+    agent = await authedAgent(app);
     dbi = openDb(DB_PATH);
 });
 afterAll(async () => {
@@ -83,11 +86,11 @@ describe('reportTotals — gelir hesabı', () => {
 
 describe('çıkış iptali artık tahsilat yazmıyor', () => {
     test('VAZGEÇTİ ile kapatılan ziyaret gelire yazılmaz, tutarı kayıtta kalır', async () => {
-        const stu = await request(app).post('/api/students/create').send({
+        const stu = await agent.post('/api/students/create').send({
             student_name: 'İptal Test', parent_name: 'Veli', parent_phone: '5550000', birth_date: '2016-01-01',
         });
         const child = stu.body.child_id;
-        const started = await request(app).post('/api/entry/start').send({ child_id: child, personel: 'Test' });
+        const started = await agent.post('/api/entry/start').send({ child_id: child, personel: 'Test' });
         expect(started.body.success).toBe(true);
 
         // Tutarın oluşması için girişi geriye al
@@ -95,12 +98,12 @@ describe('çıkış iptali artık tahsilat yazmıyor', () => {
         await run(dbi, 'UPDATE logs SET entry_time = ? WHERE log_id = ?',
             [new Date(Date.now() - 120 * 60000).toISOString(), log.log_id]);
 
-        const cashBefore = (await request(app).get('/api/reports/summary')).body.today.cash;
-        const out = await request(app).post('/api/exit/finalize').send({
+        const cashBefore = (await agent.get('/api/reports/summary')).body.today.cash;
+        const out = await agent.post('/api/exit/finalize').send({
             child_id: child, payment_type: 'VAZGEÇTİ', cancel_reason: 'Test iptali', personel: 'Kasa',
         });
         expect(out.body.success).toBe(true);
-        const cashAfter = (await request(app).get('/api/reports/summary')).body.today.cash;
+        const cashAfter = (await agent.get('/api/reports/summary')).body.today.cash;
 
         const row = await get(dbi, 'SELECT * FROM logs WHERE log_id = ?', [log.log_id]);
         expect(row.status).toBe('KAPALI');
@@ -113,7 +116,7 @@ describe('çıkış iptali artık tahsilat yazmıyor', () => {
         // ...ama nakit toplamına HİÇBİR ŞEY eklemez.
         expect(cashAfter - cashBefore).toBe(0);
 
-        const res = await request(app).get('/api/reports/summary');
+        const res = await agent.get('/api/reports/summary');
         const satir = res.body.today_logs.find(l => l.log_id === log.log_id);
         expect(satir.durum).toBe('İPTAL');
         expect(satir.tahsilat).toBe(0);
@@ -121,20 +124,20 @@ describe('çıkış iptali artık tahsilat yazmıyor', () => {
     });
 
     test('iptal edilen ziyarette puan harcanamaz', async () => {
-        const stu = await request(app).post('/api/students/create').send({
+        const stu = await agent.post('/api/students/create').send({
             student_name: 'Puan Test', parent_name: 'Veli', parent_phone: '5550001', birth_date: '2016-01-01',
         });
         const child = stu.body.child_id;
         // çocuğa puan ver
         await run(dbi, 'UPDATE students SET wallet_balance = 50 WHERE child_id = ?', [child]);
 
-        await request(app).post('/api/entry/start').send({ child_id: child, personel: 'Test' });
+        await agent.post('/api/entry/start').send({ child_id: child, personel: 'Test' });
         const log = await get(dbi, "SELECT * FROM logs WHERE child_id = ? AND status = 'AÇIK'", [child]);
         await run(dbi, 'UPDATE logs SET entry_time = ? WHERE log_id = ?',
             [new Date(Date.now() - 120 * 60000).toISOString(), log.log_id]);
 
         // İptal isteğiyle birlikte puan harcama gönderilse bile harcanmamalı.
-        const out = await request(app).post('/api/exit/finalize').send({
+        const out = await agent.post('/api/exit/finalize').send({
             child_id: child, payment_type: 'VAZGEÇTİ', kullanilan_puan: 30, personel: 'Kasa',
         });
         expect(out.body.success).toBe(true);
@@ -150,14 +153,14 @@ describe('çıkış iptali artık tahsilat yazmıyor', () => {
 describe('günlük rapor ucu', () => {
     test('iptaller ayrı sayılır, gelire ve ücretsize karışmaz', async () => {
         // Aynı veritabanı paylaşıldığı için temel alıp FARKI ölçeriz.
-        const before = (await request(app).get('/api/reports/summary')).body.today;
+        const before = (await agent.get('/api/reports/summary')).body.today;
 
         await insertLog({ payment_type: 'NAKİT', fee: 400 });
         await insertLog({ payment_type: 'KREDİ KARTI', fee: 250 });
         await insertLog({ payment_type: 'ÜCRETSİZ', fee: 0 });
         const eskiIptal = await insertLog({ payment_type: 'VAZGEÇTİ', fee: 999, durum_adi: 'VAZGEÇTİ Tahsilatı' });
 
-        const res = await request(app).get('/api/reports/summary');
+        const res = await agent.get('/api/reports/summary');
         expect(res.body.success).toBe(true);
         const t = res.body.today;
         expect(t.cash - before.cash).toBe(400);
@@ -180,7 +183,7 @@ describe('Excel dışa aktarımı', () => {
         const iptalId = await insertLog({ payment_type: 'VAZGEÇTİ', fee: 1234, durum_adi: 'VAZGEÇTİ Tahsilatı' });
         await insertLog({ payment_type: 'NAKİT', fee: 700 });
 
-        const res = await request(app).get('/api/export/excel').buffer(true).parse((r, cb) => {
+        const res = await agent.get('/api/export/excel').buffer(true).parse((r, cb) => {
             const chunks = [];
             r.on('data', c => chunks.push(c));
             r.on('end', () => cb(null, Buffer.concat(chunks)));
@@ -212,7 +215,7 @@ describe('Excel dışa aktarımı', () => {
     test('normal tahsilat satırı Durum=TAHSİLAT ve tutarı korunur', async () => {
         const ExcelJS = require('exceljs');
         const nakId = await insertLog({ payment_type: 'NAKİT', fee: 555 });
-        const res = await request(app).get('/api/export/excel').buffer(true).parse((r, cb) => {
+        const res = await agent.get('/api/export/excel').buffer(true).parse((r, cb) => {
             const chunks = [];
             r.on('data', c => chunks.push(c));
             r.on('end', () => cb(null, Buffer.concat(chunks)));

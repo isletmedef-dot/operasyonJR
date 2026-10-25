@@ -60,7 +60,7 @@ function sleep(ms) {
 
 const EXPECTED_TABLES = ['students', 'logs', 'rights', 'right_movements', 'settings', 'staff', 'bonus_packages',
     'classes', 'sessions', 'class_registrations', 'class_attendance', 'tasks', 'student_tasks', 'wallet_movements',
-    'sheets_sync_log', 'sheets_sync_errors'];
+    'sheets_sync_log', 'sheets_sync_errors', 'oturumlar'];
 
 /**
  * Every column the current application code reads or writes. Boot migrations must deliver all of
@@ -72,7 +72,7 @@ const EXPECTED_COLUMNS = {
     rights: ['hak_id', 'child_id', 'hak_tipi', 'miktar_dk', 'kalan_dk', 'kaynak', 'tanim_tarihi', 'son_kullanma', 'durum', 'satis_tutari', 'odeme_tipi', 'not_alani', 'personel', 'kalan_ana_para', 'kalan_bonus'],
     right_movements: ['hareket_id', 'tarih', 'child_id', 'hak_id', 'islem', 'hak_tipi', 'degisim_dk', 'onceki_kalan_dk', 'yeni_kalan_dk', 'kaynak', 'aciklama', 'log_id', 'personel'],
     settings: ['key', 'value'],
-    staff: ['pin', 'name'],
+    staff: ['id', 'name', 'pin_hash', 'pin_salt', 'pin_uzunluk', 'olusturma'],
     bonus_packages: ['id', 'sales_amount', 'bonus_amount'],
     classes: ['class_id', 'name', 'description', 'monthly_fee', 'term_fee', 'status', 'kaynak', 'sheet_key', 'son_gorulme', 'created_at'],
     sessions: ['session_id', 'class_id', 'day_of_week', 'start_time', 'end_time', 'capacity', 'status', 'kaynak', 'sheet_key', 'son_gorulme', 'created_at'],
@@ -103,6 +103,7 @@ const EXPECTED_SETTINGS = [
     'point_tl_rate', 'oyun_alani_seans_dk', 'class_early_minutes', 'class_late_minutes',
     'classroom_port', 'rfid_dedup_seconds', 'tap_prompt_seconds',
     'sheets_enabled', 'sheets_sync_minutes', 'sheets_tab_dersler', 'sheets_tab_program', 'sheets_tab_kayitlar',
+    'tekrar_pin_sor',
 ];
 
 /**
@@ -153,7 +154,23 @@ function readSlipFile(call) {
     return fs.readFileSync(filePath, 'utf8');
 }
 
+/**
+ * Oturum açmış bir supertest aracısı döner.
+ *
+ * Uygulamanın tüm uçları artık oturum ister; testler bu denetimi KAPATMAZ, gerçek giriş
+ * yolunu kullanır. Personel tablosu boşken /api/auth/setup ilk yöneticiyi tanımlar.
+ */
+async function authedAgent(app, pin = '1234') {
+    const request = require('supertest');
+    const agent = request.agent(app);
+    const kurulum = await agent.post('/api/auth/setup').send({ name: 'Test Personel', pin });
+    if (!kurulum.body || !kurulum.body.success) {
+        await agent.post('/api/auth/login').send({ pin });
+    }
+    return agent;
+}
+
 module.exports = {
-    makeTempDbPath, openDb, all, get, run, closeDb, sleep, waitForSchema, readSlipFile,
+    makeTempDbPath, openDb, all, get, run, closeDb, sleep, waitForSchema, readSlipFile, authedAgent,
     EXPECTED_TABLES, EXPECTED_COLUMNS, EXPECTED_INDEXES, EXPECTED_SETTINGS,
 };

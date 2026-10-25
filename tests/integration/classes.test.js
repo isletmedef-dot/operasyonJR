@@ -7,7 +7,7 @@
  * instead of a mocked one.
  */
 const path = require('path');
-const { makeTempDbPath, waitForSchema, openDb, get, all, closeDb } = require('../helpers/db');
+const { makeTempDbPath, waitForSchema, openDb, get, all, closeDb, authedAgent } = require('../helpers/db');
 
 jest.mock('pdf-to-printer', () => ({ print: jest.fn().mockResolvedValue(undefined) }));
 
@@ -22,8 +22,11 @@ const {
 
 let dbi;
 
+let agent;
+
 beforeAll(async () => {
     await waitForSchema(DB_PATH);
+    agent = await authedAgent(app);
     dbi = openDb(DB_PATH);
 });
 
@@ -41,7 +44,7 @@ const hhmm = (minsFromNow) => {
 };
 
 async function makeClass(body = {}) {
-    const res = await request(app).post('/api/classes/add').send({
+    const res = await agent.post('/api/classes/add').send({
         name: 'Lego WeDo', monthly_fee: 1200, term_fee: 3600, ...body,
     });
     expect(res.body.success).toBe(true);
@@ -49,7 +52,7 @@ async function makeClass(body = {}) {
 }
 
 async function makeSession(classId, startMin, endMin, extra = {}) {
-    const res = await request(app).post('/api/sessions/add').send({
+    const res = await agent.post('/api/sessions/add').send({
         class_id: classId, day_of_week: dow(), start_time: hhmm(startMin), end_time: hhmm(endMin), ...extra,
     });
     expect(res.body.success).toBe(true);
@@ -57,7 +60,7 @@ async function makeSession(classId, startMin, endMin, extra = {}) {
 }
 
 async function makeStudent(name, rfid = null) {
-    const res = await request(app).post('/api/students/create').send({
+    const res = await agent.post('/api/students/create').send({
         student_name: name, parent_name: 'Veli', parent_phone: '5550000', birth_date: '2016-01-01', rfid_id: rfid,
     });
     expect(res.body.success).toBe(true);
@@ -65,21 +68,21 @@ async function makeStudent(name, rfid = null) {
 }
 
 const register = (child_id, session_id, extra = {}) =>
-    request(app).post('/api/classes/register').send({ child_id, session_id, payment_type: 'AYLIK', ...extra });
+    agent.post('/api/classes/register').send({ child_id, session_id, payment_type: 'AYLIK', ...extra });
 
-const scan = (rfid_id) => request(app).post('/api/rfid/scan').send({ rfid_id });
-const processAbsences = () => request(app).post('/api/classes/process-absences').send({});
+const scan = (rfid_id) => agent.post('/api/rfid/scan').send({ rfid_id });
+const processAbsences = () => agent.post('/api/classes/process-absences').send({});
 
 describe('classes and sessions', () => {
     test('create, list and update a class', async () => {
         const id = await makeClass({ name: '3D Pen', monthly_fee: 900, term_fee: 2700, description: 'Kalem' });
-        const list = await request(app).get('/api/classes');
+        const list = await agent.get('/api/classes');
         const cls = list.body.classes.find((c) => c.class_id === id);
         expect(cls.name).toBe('3D Pen');
         expect(cls.monthly_fee).toBe(900);
         expect(cls.sessions).toEqual([]);
 
-        const upd = await request(app).post('/api/classes/update').send({
+        const upd = await agent.post('/api/classes/update').send({
             class_id: id, name: '3D Pen İleri', monthly_fee: 1000, term_fee: 3000, status: 'Aktif',
         });
         expect(upd.body.success).toBe(true);
@@ -88,13 +91,13 @@ describe('classes and sessions', () => {
     });
 
     test('a class needs a name', async () => {
-        const res = await request(app).post('/api/classes/add').send({ name: '   ' });
+        const res = await agent.post('/api/classes/add').send({ name: '   ' });
         expect(res.body.success).toBe(false);
     });
 
     test('session must end after it starts', async () => {
         const classId = await makeClass();
-        const res = await request(app).post('/api/sessions/add').send({
+        const res = await agent.post('/api/sessions/add').send({
             class_id: classId, day_of_week: dow(), start_time: '18:00', end_time: '17:00',
         });
         expect(res.body.success).toBe(false);
@@ -107,7 +110,7 @@ describe('classes and sessions', () => {
         const child = await makeStudent('Sayım Çocuk');
         await register(child, sessionId);
 
-        const list = await request(app).get('/api/classes');
+        const list = await agent.get('/api/classes');
         const cls = list.body.classes.find((c) => c.class_id === classId);
         expect(cls.sessions[0].kayitli).toBe(1);
     });
@@ -118,7 +121,7 @@ describe('classes and sessions', () => {
         const child = await makeStudent('Silinemez Çocuk');
         await register(child, sessionId);
 
-        const res = await request(app).post('/api/sessions/delete').send({ session_id: sessionId });
+        const res = await agent.post('/api/sessions/delete').send({ session_id: sessionId });
         expect(res.body.success).toBe(false);
         expect(res.body.message).toContain('aktif kayıtlı');
     });
@@ -177,7 +180,7 @@ describe('registration (payment + session assignment together)', () => {
     });
 
     test('registration without a student or session is rejected', async () => {
-        expect((await request(app).post('/api/classes/register').send({})).body.success).toBe(false);
+        expect((await agent.post('/api/classes/register').send({})).body.success).toBe(false);
     });
 
     test('registrations can be listed and cancelled', async () => {
@@ -186,18 +189,18 @@ describe('registration (payment + session assignment together)', () => {
         const child = await makeStudent('İptal Çocuk');
         const reg = await register(child, sessionId);
 
-        const list = await request(app).get('/api/classes/registrations').query({ child_id: child });
+        const list = await agent.get('/api/classes/registrations').query({ child_id: child });
         expect(list.body.success).toBe(true);
         expect(list.body.registrations).toHaveLength(1);
         expect(list.body.registrations[0].gun_adi).toBeTruthy();
 
-        const cancel = await request(app).post('/api/classes/registration-cancel').send({ reg_id: reg.body.reg_id });
+        const cancel = await agent.post('/api/classes/registration-cancel').send({ reg_id: reg.body.reg_id });
         expect(cancel.body.success).toBe(true);
         const row = await get(dbi, 'SELECT status FROM class_registrations WHERE reg_id = ?', [reg.body.reg_id]);
         expect(row.status).toBe('İptal');
 
         // a cancelled registration no longer blocks session deletion
-        const del = await request(app).post('/api/sessions/delete').send({ session_id: sessionId });
+        const del = await agent.post('/api/sessions/delete').send({ session_id: sessionId });
         expect(del.body.success).toBe(true);
     });
 });
@@ -235,7 +238,7 @@ describe('smart RFID routing', () => {
         const rights = await all(dbi, 'SELECT * FROM rights WHERE child_id = ?', [child]);
         expect(rights).toHaveLength(0);
 
-        const inside = await request(app).get('/api/inside');
+        const inside = await agent.get('/api/inside');
         expect(inside.body.children.map((c) => c.child_id)).not.toContain(child);
     });
 
@@ -257,7 +260,7 @@ describe('smart RFID routing', () => {
         const classId = await makeClass({ name: 'Saat Dışı' });
         await makeSession(classId, 120, 180);           // two hours from now
         const child = await makeStudent('Saat Dışı Çocuk', 'CARD-OUTSIDE');
-        const list = await request(app).get('/api/classes');
+        const list = await agent.get('/api/classes');
         const session = list.body.classes.find((c) => c.class_id === classId).sessions[0];
         await register(child, session.session_id);
 
@@ -271,7 +274,7 @@ describe('smart RFID routing', () => {
     test('a session on another day does not match today', async () => {
         const classId = await makeClass({ name: 'Başka Gün' });
         const otherDay = dow() === 7 ? 1 : dow() + 1;
-        const add = await request(app).post('/api/sessions/add').send({
+        const add = await agent.post('/api/sessions/add').send({
             class_id: classId, day_of_week: otherDay, start_time: hhmm(-30), end_time: hhmm(30),
         });
         const child = await makeStudent('Başka Gün Çocuk', 'CARD-OTHERDAY');
@@ -350,7 +353,7 @@ describe('absence compensation', () => {
         await register(child, sessionId);
 
         // mark the attendance by hand (the child arrived, the scan window has passed)
-        const mark = await request(app).post('/api/classes/attendance')
+        const mark = await agent.post('/api/classes/attendance')
             .send({ child_id: child, session_id: sessionId, durum: 'GELDİ', personel: 'Test' });
         expect(mark.body.success).toBe(true);
 
@@ -387,7 +390,7 @@ describe('absence compensation', () => {
         const child = await makeStudent('Elle Çocuk', 'CARD-MANUAL');
         await register(child, sessionId);
 
-        const absent = await request(app).post('/api/classes/attendance')
+        const absent = await agent.post('/api/classes/attendance')
             .send({ child_id: child, session_id: sessionId, durum: 'GELMEDİ', personel: 'Öğretmen' });
         expect(absent.body.success).toBe(true);
         expect(absent.body.telafi).toBeTruthy();
@@ -395,7 +398,7 @@ describe('absence compensation', () => {
         const right = await get(dbi, 'SELECT * FROM rights WHERE hak_id = ?', [absent.body.telafi]);
         expect(right.durum).toBe('Aktif');
 
-        const corrected = await request(app).post('/api/classes/attendance')
+        const corrected = await agent.post('/api/classes/attendance')
             .send({ child_id: child, session_id: sessionId, durum: 'GELDİ', personel: 'Öğretmen' });
         expect(corrected.body.success).toBe(true);
 
@@ -411,7 +414,7 @@ describe('absence compensation', () => {
 
         const past = new Date(Date.now() - 3 * 86400000);
         const pastDate = localDateStr(past);
-        const add = await request(app).post('/api/sessions/add').send({
+        const add = await agent.post('/api/sessions/add').send({
             class_id: classId, day_of_week: dayOfWeek(past), start_time: '10:00', end_time: '11:00',
         });
         await register(child, add.body.session_id, { start_date: pastDate });
@@ -420,7 +423,7 @@ describe('absence compensation', () => {
         expect((await processAbsences()).body.telafi_verilen).toBe(0);
         expect(await get(dbi, 'SELECT * FROM class_attendance WHERE child_id = ?', [child])).toBeUndefined();
 
-        const res = await request(app).post('/api/classes/process-absences').send({ tarih: pastDate });
+        const res = await agent.post('/api/classes/process-absences').send({ tarih: pastDate });
         expect(res.body.success).toBe(true);
         expect(res.body.telafi_verilen).toBe(1);
 
@@ -439,7 +442,7 @@ describe('absence compensation', () => {
         await scan('CARD-FIX');                       // attended via the card tap
 
         // the teacher says the child actually did not attend
-        const corrected = await request(app).post('/api/classes/attendance')
+        const corrected = await agent.post('/api/classes/attendance')
             .send({ child_id: child, session_id: sessionId, durum: 'GELMEDİ', personel: 'Öğretmen' });
         expect(corrected.body.success).toBe(true);
         expect(corrected.body.telafi).toBeTruthy();
@@ -450,13 +453,13 @@ describe('absence compensation', () => {
         expect(right.kaynak).toBe('Derse Katılmama Telafisi');
 
         // marking absent again must reuse that right, not mint a second one
-        const again = await request(app).post('/api/classes/attendance')
+        const again = await agent.post('/api/classes/attendance')
             .send({ child_id: child, session_id: sessionId, durum: 'GELMEDİ', personel: 'Öğretmen' });
         expect(again.body.telafi).toBe(corrected.body.telafi);
         expect(await all(dbi, "SELECT * FROM rights WHERE child_id = ? AND hak_tipi = 'TELAFİ'", [child])).toHaveLength(1);
 
         // correcting back to GELDİ withdraws the unused compensation
-        await request(app).post('/api/classes/attendance')
+        await agent.post('/api/classes/attendance')
             .send({ child_id: child, session_id: sessionId, durum: 'GELDİ', personel: 'Öğretmen' });
         const after = await get(dbi, 'SELECT * FROM rights WHERE hak_id = ?', [corrected.body.telafi]);
         expect(after.durum).toBe('İptal');
@@ -472,7 +475,7 @@ describe('absence compensation', () => {
         await register(child, sessionId);
         await scan('CARD-TODAY');
 
-        const res = await request(app).get('/api/classes/today');
+        const res = await agent.get('/api/classes/today');
         expect(res.body.success).toBe(true);
         const session = res.body.sessions.find((s) => s.session_id === sessionId);
         expect(session).toBeTruthy();

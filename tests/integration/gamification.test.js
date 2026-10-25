@@ -5,7 +5,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { makeTempDbPath, waitForSchema, openDb, get, all, run, closeDb } = require('../helpers/db');
+const { makeTempDbPath, waitForSchema, openDb, get, all, run, closeDb, authedAgent } = require('../helpers/db');
 
 jest.mock('pdf-to-printer', () => ({ print: jest.fn().mockResolvedValue(undefined) }));
 
@@ -21,8 +21,11 @@ const {
 
 let dbi;
 
+let agent;
+
 beforeAll(async () => {
     await waitForSchema(DB_PATH);
+    agent = await authedAgent(app);
     dbi = openDb(DB_PATH);
 });
 
@@ -35,27 +38,27 @@ afterAll(async () => {
 beforeEach(() => ptp.print.mockClear());
 
 async function makeStudent(name) {
-    const res = await request(app).post('/api/students/create').send({
+    const res = await agent.post('/api/students/create').send({
         student_name: name, parent_name: 'Veli', parent_phone: '5551112233', birth_date: '2016-05-10',
     });
     expect(res.body.success).toBe(true);
     return res.body.child_id;
 }
 
-const taskIds = async () => (await request(app).get('/api/tasks')).body.tasks.map((t) => t.task_id);
+const taskIds = async () => (await agent.get('/api/tasks')).body.tasks.map((t) => t.task_id);
 
 const complete = (child_id, task_id, personel = 'Öğretmen') =>
-    request(app).post('/api/tasks/complete').send({ child_id, task_id, personel });
+    agent.post('/api/tasks/complete').send({ child_id, task_id, personel });
 
 const uncomplete = (child_id, task_id) =>
-    request(app).post('/api/tasks/uncomplete').send({ child_id, task_id });
+    agent.post('/api/tasks/uncomplete').send({ child_id, task_id });
 
 const balanceOf = async (child_id) =>
     Number((await get(dbi, 'SELECT wallet_balance FROM students WHERE child_id = ?', [child_id])).wallet_balance || 0);
 
 /** Check a child in and backdate the entry so the bill is a known tier. */
 async function openSession(childId, minutesAgo) {
-    const started = await request(app).post('/api/entry/start').send({ child_id: childId, personel: 'Test' });
+    const started = await agent.post('/api/entry/start').send({ child_id: childId, personel: 'Test' });
     expect(started.body.success).toBe(true);
     const log = await get(dbi, "SELECT * FROM logs WHERE child_id = ? AND status = 'AÇIK'", [childId]);
     await run(dbi, 'UPDATE logs SET entry_time = ? WHERE log_id = ?',
@@ -63,7 +66,7 @@ async function openSession(childId, minutesAgo) {
 }
 
 const checkout = (child_id, body = {}) =>
-    request(app).post('/api/exit/finalize').send({ child_id, payment_type: 'NAKİT', personel: 'Kasa', ...body });
+    agent.post('/api/exit/finalize').send({ child_id, payment_type: 'NAKİT', personel: 'Kasa', ...body });
 
 function lastSlip() {
     const calls = ptp.print.mock.calls;
@@ -73,7 +76,7 @@ function lastSlip() {
 
 describe('tasks', () => {
     test('the three starter tasks are seeded', async () => {
-        const res = await request(app).get('/api/tasks');
+        const res = await agent.get('/api/tasks');
         expect(res.body.success).toBe(true);
         const names = res.body.tasks.map((t) => t.name);
         expect(names).toEqual(expect.arrayContaining(['Lego WeDo', '3D Pen', 'Paper Circuits']));
@@ -81,13 +84,13 @@ describe('tasks', () => {
     });
 
     test('a task can be added and updated', async () => {
-        const add = await request(app).post('/api/tasks/add').send({ name: 'Robotik', points: 25 });
+        const add = await agent.post('/api/tasks/add').send({ name: 'Robotik', points: 25 });
         expect(add.body.success).toBe(true);
         const row = await get(dbi, 'SELECT * FROM tasks WHERE task_id = ?', [add.body.task_id]);
         expect(row.name).toBe('Robotik');
         expect(row.points).toBe(25);
 
-        const upd = await request(app).post('/api/tasks/update').send({
+        const upd = await agent.post('/api/tasks/update').send({
             task_id: add.body.task_id, name: 'Robotik İleri', points: 30, status: 'Aktif',
         });
         expect(upd.body.success).toBe(true);
@@ -95,7 +98,7 @@ describe('tasks', () => {
     });
 
     test('a task without a name is rejected', async () => {
-        expect((await request(app).post('/api/tasks/add').send({ name: '' })).body.success).toBe(false);
+        expect((await agent.post('/api/tasks/add').send({ name: '' })).body.success).toBe(false);
     });
 });
 
@@ -142,7 +145,7 @@ describe('passport and wallet', () => {
         const ids = await taskIds();
         await complete(child, ids[0]);
 
-        const res = await request(app).get('/api/passport/' + child);
+        const res = await agent.get('/api/passport/' + child);
         expect(res.body.success).toBe(true);
         expect(res.body.student.student_name).toBe('Liste Çocuk');
         expect(res.body.student.wallet_balance).toBe(10);
@@ -153,13 +156,13 @@ describe('passport and wallet', () => {
     });
 
     test('an unknown child has no passport', async () => {
-        expect((await request(app).get('/api/passport/UC-999999')).body.success).toBe(false);
+        expect((await agent.get('/api/passport/UC-999999')).body.success).toBe(false);
     });
 
     test('the wallet exposes the balance and its TL value', async () => {
         const child = await makeStudent('Cüzdan Çocuk');
         await withTransaction(() => grantPoints(child, 35, 'test'));
-        const res = await request(app).get('/api/wallet/' + child);
+        const res = await agent.get('/api/wallet/' + child);
         expect(res.body.success).toBe(true);
         expect(res.body.wallet_balance).toBe(35);
         expect(res.body.point_tl_rate).toBe(1);
@@ -221,7 +224,7 @@ describe('week leaderboard', () => {
              VALUES (?, 'TSK-100', 999, ?, 'Test')`,
             [c, new Date(Date.now() - 21 * 86400000).toISOString()]);
 
-        const res = await request(app).get('/api/leaderboard/weekly');
+        const res = await agent.get('/api/leaderboard/weekly');
         expect(res.body.success).toBe(true);
         expect(res.body.hafta_baslangici).toBeTruthy();
 
@@ -240,12 +243,12 @@ describe('week leaderboard', () => {
         const ids = await taskIds();
         await complete(child, ids[0]);
 
-        let res = await request(app).get('/api/leaderboard/weekly');
+        let res = await agent.get('/api/leaderboard/weekly');
         expect(res.body.leaderboard.find((r) => r.child_id === child).toplam_puan).toBe(10);
 
         await uncomplete(child, ids[0]);
 
-        res = await request(app).get('/api/leaderboard/weekly');
+        res = await agent.get('/api/leaderboard/weekly');
         expect(res.body.leaderboard.find((r) => r.child_id === child)).toBeUndefined();
     });
 
@@ -257,12 +260,12 @@ describe('week leaderboard', () => {
         await checkout(child, { kullanilan_puan: 10 });   // all spent
         expect(await balanceOf(child)).toBe(0);
 
-        const res = await request(app).get('/api/leaderboard/weekly');
+        const res = await agent.get('/api/leaderboard/weekly');
         expect(res.body.leaderboard.find((r) => r.child_id === child).toplam_puan).toBe(10);
     });
 
     test('the week starts on Monday', async () => {
-        const res = await request(app).get('/api/leaderboard/weekly');
+        const res = await agent.get('/api/leaderboard/weekly');
         const start = new Date(res.body.hafta_baslangici);
         expect(start.getDay()).toBe(1);              // Monday
         expect(start.getHours()).toBe(0);
@@ -275,7 +278,7 @@ describe('points on the checkout receipt', () => {
         const child = await makeStudent('İndirim Çocuk');
         await withTransaction(() => grantPoints(child, 200, 'test'));
         await openSession(child, 20);                    // bill lands in the base tier
-        const preview = await request(app).get('/api/exit/preview/' + child);
+        const preview = await agent.get('/api/exit/preview/' + child);
         const fee = preview.body.fee;
         expect(fee).toBeGreaterThan(20);
 
@@ -314,7 +317,7 @@ describe('points on the checkout receipt', () => {
         const child = await makeStudent('Az Puanlı');
         await withTransaction(() => grantPoints(child, 5, 'test'));
         await openSession(child, 20);
-        const preview = await request(app).get('/api/exit/preview/' + child);
+        const preview = await agent.get('/api/exit/preview/' + child);
 
         await checkout(child, { kullanilan_puan: 500 });
         const log = await get(dbi, "SELECT * FROM logs WHERE child_id = ? AND status = 'KAPALI'", [child]);
@@ -327,7 +330,7 @@ describe('points on the checkout receipt', () => {
         const child = await makeStudent('Puanı Kalan');
         await withTransaction(() => grantPoints(child, 500, 'test'));
         await openSession(child, 20);
-        const preview = await request(app).get('/api/exit/preview/' + child);
+        const preview = await agent.get('/api/exit/preview/' + child);
         const fee = preview.body.fee;
 
         await checkout(child, { kullanilan_puan: 500 });
@@ -342,7 +345,7 @@ describe('points on the checkout receipt', () => {
         await withTransaction(() => grantPoints(child, 40, 'test'));
         await openSession(child, 1);                             // inside the tolerance window → fee 0
 
-        const preview = await request(app).get('/api/exit/preview/' + child);
+        const preview = await agent.get('/api/exit/preview/' + child);
         expect(preview.body.fee).toBe(0);
 
         await checkout(child, { kullanilan_puan: 40 });
@@ -355,7 +358,7 @@ describe('points on the checkout receipt', () => {
     test('the status slip shows the wallet balance too', async () => {
         const child = await makeStudent('Fiş Çocuk');
         await withTransaction(() => grantPoints(child, 7, 'test'));
-        const res = await request(app).post('/api/print/status').send({
+        const res = await agent.post('/api/print/status').send({
             student_name: 'Fiş Çocuk', child_id: child, parent_phone: '5551112233',
             entry_time_fmt: '14:05', sure_dk: 42, estimated_fee: 500,
         });
