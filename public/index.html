@@ -39,6 +39,15 @@ h1 { margin:0 0 20px 0; font-size:32px; }
 .st-foot { margin-top:14px; font-size:11px; color:#555; text-align:center; }
 .st-empty { text-align:center; color:#555; padding:12px 0; }
 
+/* Termal (80 mm) döküm biçimi.
+   Sütunlu tablo 80 mm ruloya sığmaz: tarayıcı tabloyu küçültmez, sağdan KESER ve
+   "Kalan Bakiye" sütunu kaybolur. Bu yüzden termal modda ziyaretler sütun yerine
+   alt alta satırlara yazılır; her satır 80 mm'ye (≈72 mm baskı alanı) sığar. */
+#statementArea pre.tm-metin {
+    font-family: Consolas, 'Courier New', monospace;
+    font-size: 11px; line-height: 1.35; margin: 0; white-space: pre;
+}
+
 @media print {
     body * { visibility: hidden; }
     /* 1) Anlık durum / giriş-çıkış fişi (varsayılan) */
@@ -48,6 +57,9 @@ h1 { margin:0 0 20px 0; font-size:32px; }
     body.stmt #printArea { display: none !important; }
     body.stmt #statementArea, body.stmt #statementArea * { visibility: visible; }
     body.stmt #statementArea { display: block !important; position: absolute; left: 0; top: 0; width: 100%; padding: 4px; }
+    /* 3) Termal döküm: sayfa 80 mm'ye ayarlanır, ek boşluk bırakılmaz */
+    body.stmt.termal #statementArea { padding: 0; width: auto; }
+    body.stmt.termal #statementArea pre.tm-metin { font-size: 11px; }
     @page { margin: 14mm; }
 }
 </style>
@@ -75,6 +87,7 @@ h1 { margin:0 0 20px 0; font-size:32px; }
         <button class="btn btn-green" id="btnStart" onclick="startEntry()">GİRİŞ BAŞLAT</button>
         <button class="btn btn-blue" onclick="printActiveStatus()">ÖĞRENCİ ANLIK DURUMUNU YAZDIR</button>
         <button class="btn btn-gray" onclick="printStatement()">HAREKET DÖKÜMÜ YAZDIR (Giriş / Çıkış)</button>
+        <button class="btn btn-gray" onclick="printStatement('termal')">HAREKET DÖKÜMÜ — TERMAL YAZDIR (80 mm)</button>
     </div>
 </div>
 
@@ -171,6 +184,7 @@ h1 { margin:0 0 20px 0; font-size:32px; }
                     </div>
                     <button class="btn btn-blue" onclick="printActiveStatus()">ÖĞRENCİ ANLIK DURUMUNU YAZDIR</button>
                     <button class="btn btn-gray" onclick="printStatement()">HAREKET DÖKÜMÜ YAZDIR (Giriş / Çıkış)</button>
+                    <button class="btn btn-gray" onclick="printStatement('termal')">HAREKET DÖKÜMÜ — TERMAL YAZDIR (80 mm)</button>
                     <button class="btn" style="background:#b91c1c; color:#fff;" onclick="openExitModal()">ÇIKIŞ YAP VE TAHSİLAT AL</button>
                 `;
             } else {
@@ -179,6 +193,7 @@ h1 { margin:0 0 20px 0; font-size:32px; }
                 document.getElementById('actionArea').innerHTML = `
                     <button class="btn btn-green" onclick="startEntry()">GİRİŞ BAŞLAT</button>
                     <button class="btn btn-gray" onclick="printStatement()">HAREKET DÖKÜMÜ YAZDIR (Giriş / Çıkış)</button>
+                    <button class="btn btn-gray" onclick="printStatement('termal')">HAREKET DÖKÜMÜ — TERMAL YAZDIR (80 mm)</button>
                 `;
             }
         });
@@ -302,20 +317,88 @@ h1 { margin:0 0 20px 0; font-size:32px; }
     }
 
     // ---- Hareket dökümü (ekstre) ----
-    // Tarayıcıdan yazdırılır: termal fiş yerine okunur bir A4 dökümü üretir.
-    function printStatement() {
+    // mod: undefined => A4/tablo biçimi, 'termal' => 80 mm rulo biçimi.
+    function printStatement(mod) {
+        const termal = mod === 'termal';
         fetch('/api/students/statement/' + encodeURIComponent(childId))
             .then(r => r.json())
             .then(data => {
                 if (!data.success) { alert(data.message || 'Döküm alınamadı.'); return; }
-                document.getElementById('statementArea').innerHTML = statementHtml(data);
+                document.getElementById('statementArea').innerHTML = termal ? statementTermalHtml(data) : statementHtml(data);
                 document.body.classList.add('stmt');
-                const cleanup = () => { document.body.classList.remove('stmt'); window.removeEventListener('afterprint', cleanup); };
+                document.body.classList.toggle('termal', termal);
+                termalSayfaKur(termal);
+                const cleanup = () => {
+                    document.body.classList.remove('stmt');
+                    document.body.classList.remove('termal');
+                    termalSayfaKur(false);
+                    window.removeEventListener('afterprint', cleanup);
+                };
                 window.addEventListener('afterprint', cleanup);
                 window.print();
                 setTimeout(cleanup, 2000);   // afterprint desteklenmezse düğme takılı kalmasın
             })
             .catch(e => alert('Döküm alınamadı: ' + e.message));
+    }
+
+    /* @page kuralı gövde sınıfıyla değiştirilemez, bu yüzden termal modda
+       sayfa boyutunu ayarlayan ayrı bir stil etiketi eklenir/çıkarılır. */
+    function termalSayfaKur(acik) {
+        const mevcut = document.getElementById('termalSayfa');
+        if (!acik) { if (mevcut) mevcut.remove(); return; }
+        if (mevcut) return;
+        const st = document.createElement('style');
+        st.id = 'termalSayfa';
+        st.textContent = '@page { size: 80mm auto; margin: 3mm; }';
+        document.head.appendChild(st);
+    }
+
+    /* 80 mm rulo için döküm: sütun yok, her ziyaret 1-2 kısa satır.
+       Kalan bakiye satırı ziyaretin ALTINA yazılır; eski biçimde sağdaki sütun
+       kesiliyordu. Satırlar 36 karakteri geçmez (72 mm baskı alanına sığar). */
+    function statementTermalHtml(d) {
+        const CI = '================================';
+        const satir = [];
+        satir.push('ÜRETEN ÇOCUK');
+        satir.push('Hareket Dökümü');
+        satir.push(CI);
+        satir.push(stEsc(d.ogrenci.student_name));
+        satir.push(stEsc(d.ogrenci.child_id) + ' ' + stEsc(d.ogrenci.parent_name || '-'));
+        if (d.ogrenci.parent_phone) satir.push('Tel: ' + stEsc(d.ogrenci.parent_phone));
+        satir.push('Döküm: ' + new Date().toLocaleString('tr-TR'));
+        satir.push(CI);
+        // Termal fişte ziyaretlerin altındaki "Kalan" bir YÜRÜYEN bakiye olarak hesaplanır:
+        // ilk bakiyeden her ziyaretin tutarı sırayla düşülür, son satır özetin "KALAN"
+        // değerine tam oturur. (A4 dökümü hareket defterini gösterir; orada elle yapılan
+        // düzeltmeler görünür. Termal fiş ise müşterinin kontrol edebileceği bir zincir verir.)
+        let yuruyen = Number(d.kalan.paket_ilk || 0);
+        const ilkVar = yuruyen > 0;
+        d.hareketler.forEach((h) => {
+            const no = h.sira + ') ';
+            const kisa = stDate(h.tarih);                                // 26.09.2026
+            if (h.iptal) satir.push(no + kisa + ' ' + stSure(h.sure_dk) + ' IPTAL');
+            else if (/İyi niyet/i.test(String(h.ozet || ''))) satir.push(no + kisa + ' ' + stSure(h.sure_dk) + ' iyi niyet');
+            else if (h.paket_dk > 0) satir.push(no + kisa + ' ' + stSure(h.sure_dk) + ' Paket ' + stInt(h.paket_dk) + 'TL');
+            else if (h.nakit_tl > 0) satir.push(no + kisa + ' ' + stSure(h.sure_dk) + ' ' + stInt(h.nakit_tl) + 'TL');
+            else satir.push(no + kisa + ' ' + stSure(h.sure_dk));
+            if (ilkVar) {
+                yuruyen -= Number(h.paket_dk || 0);
+                satir.push('   Kalan: ' + stInt(yuruyen) + ' TL');
+            } else if (h.kalan_dk !== null && h.kalan_dk !== undefined) {
+                satir.push('   Kalan: ' + stInt(h.kalan_dk) + (h.kalan_tipi === 'PAKET' ? ' TL' : ' dk'));
+            }
+        });
+        if (!d.hareketler.length) satir.push('Hareket kaydı yok.');
+        satir.push(CI);
+        if (d.kalan.paket_ilk > 0) satir.push('İlk bakiye : ' + stMoney(d.kalan.paket_ilk));
+        if (d.ozet.paket_dk > 0) satir.push('Kullanılan : ' + stMoney(d.ozet.paket_dk));
+        if (d.ozet.nakit_tl > 0) satir.push('Nakit/kart : ' + stMoney(d.ozet.nakit_tl));
+        satir.push('KALAN      : ' + stMoney(d.kalan.paket_dk));
+        if (d.kalan.telafi_dk > 0) satir.push('Telafi     : ' + stInt(d.kalan.telafi_dk) + ' dk');
+        if (d.kalan.puan > 0) satir.push('Puan       : ' + stInt(d.kalan.puan));
+        satir.push(CI);
+        satir.push('Ziyaret: ' + stInt(d.ozet.ziyaret));
+        return '<pre class="tm-metin">' + satir.join('\n') + '</pre>';
     }
 
     function stEsc(v) {
