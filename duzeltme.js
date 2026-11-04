@@ -80,6 +80,25 @@ async function hareketYaz(db, h) {
 
     await run(db, 'BEGIN IMMEDIATE');
     try {
+        // ---- 0) Süresi dolmuş işaretlenmiş ÖN ÖDEMELİ paketleri geri aç ----
+        // Eski süre taraması PAKET haklarını da 'Süresi Doldu' yapıyordu: bakiye silinmiyor
+        // ama profilde 0 görünüyor ve çıkışta kullanılamıyordu (aile parasını harcayamıyordu).
+        const suresiDolmusPaketler = await all(db, `SELECT r.*, s.student_name FROM rights r
+                                                    JOIN students s ON s.child_id = r.child_id
+                                                    WHERE r.hak_tipi = 'PAKET' AND r.durum = 'Süresi Doldu' AND r.kalan_dk > 0`);
+        if (suresiDolmusPaketler.length) {
+            console.log('--- 0) SÜRESİ DOLMUŞ PAKETLER GERİ AÇILIYOR ---');
+            for (const p of suresiDolmusPaketler) {
+                console.log('  ' + String(p.student_name || '').slice(0, 18).padEnd(18) + ' kalan ' + p.kalan_dk + ' TL -> Aktif');
+                await run(db, "UPDATE rights SET durum = 'Aktif' WHERE hak_id = ?", [p.hak_id]);
+                await hareketYaz(db, { child_id: p.child_id, hak_id: p.hak_id, degisim: 0,
+                    onceki: Number(p.kalan_dk), yeni: Number(p.kalan_dk),
+                    aciklama: 'Paket bakiyesi ön ödemeli olduğu için süre sonu kaldırıldı (' + p.kalan_dk + ' TL tekrar harcanabilir).' });
+                hareketSayisi++;
+            }
+            console.log('');
+        }
+
         // ---- 1) Tutar düzeltmeleri ------------------------------------------
         console.log('--- 1) TUTAR DÜZELTMELERİ (tarifeye çevrilir) ---');
         for (const d of PLAN.tutar) {
@@ -146,7 +165,7 @@ async function hareketYaz(db, h) {
         console.log('\n--- 4) BAKİYE YENİDEN HESABI (ilk verilen - tarifeye göre kullanım) ---');
         console.log('   * "ara bakiye" = 1-3. aşamalar uygulandıktan sonraki değer; "yeni kalan" esas alınır.');
         console.log('   öğrenci            | ilk verilen | tarifeye göre kullanım | ara bakiye* | yeni kalan');
-        const paketler = await all(db, `SELECT * FROM rights WHERE hak_tipi='PAKET' AND durum='Aktif'`);
+        const paketler = await all(db, `SELECT * FROM rights WHERE hak_tipi='PAKET' AND (durum='Aktif' OR durum='Süresi Doldu')`);
         const cocuklar = [...new Set(paketler.map((p) => p.child_id))];
 
         for (const cid of cocuklar) {

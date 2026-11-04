@@ -589,7 +589,11 @@ async function runExpiredRightsSweep() {
     }
 
     await dbRun(`UPDATE rights SET kalan_dk = 0, durum = 'Süresi Doldu (Dönüştü)' WHERE durum = 'İşleniyor'`, []);
-    await dbRun(`UPDATE rights SET durum = 'Süresi Doldu' WHERE durum = 'Aktif' AND son_kullanma < ?`, [today]);
+    // PAKET hariç tutulur: paket bakiyesi ÖN ÖDEMELİ PARADIR. Bu satır paketleri de
+    // 'Süresi Doldu' yapıyordu; bakiye silinmese de profilden kayboluyor ve çıkışta
+    // kullanılamıyordu, yani aile parasını harcayamıyordu. Oyun alanı telafisinin
+    // süresi dolmaya ve derse dönüşmeye devam eder (o davranış korunuyor).
+    await dbRun(`UPDATE rights SET durum = 'Süresi Doldu' WHERE durum = 'Aktif' AND hak_tipi <> 'PAKET' AND son_kullanma < ?`, [today]);
 }
 
 // Aynı anda birden fazla istek gelirse hepsi sürmekte olan taramanın bitmesini bekler
@@ -937,7 +941,7 @@ app.post('/api/students/edit', async (req, res) => {
             }
 
             // --- PAKET bakiyesi ---
-            const packages = await dbAll(`SELECT * FROM rights WHERE child_id = ? AND hak_tipi = 'PAKET' AND durum = 'Aktif'`, [child_id]);
+            const packages = await dbAll(`SELECT * FROM rights WHERE child_id = ? AND hak_tipi = 'PAKET' AND (durum = 'Aktif' OR durum = 'Süresi Doldu')`, [child_id]);
             if (packages.length > 0) {
                 await elleDegisiklik('PAKET', packages[0].hak_id, packages[0].kalan_dk, newPackageMinutes,
                     'Paket bakiyesi elle değiştirildi (' + Number(packages[0].kalan_dk || 0) + ' -> ' + newPackageMinutes + ' TL).');
@@ -991,7 +995,7 @@ app.get('/api/students/get/:child_id', (req, res) => {
         db.get(`SELECT * FROM students WHERE child_id = ?`, [req.params.child_id], (err, student) => {
             if (!student) return res.json({ success: false, message: "Öğrenci bulunamadı." });
             db.get(`SELECT * FROM logs WHERE child_id = ? AND status = 'AÇIK'`, [req.params.child_id], (err, activeLog) => {
-                db.all(`SELECT * FROM rights WHERE child_id = ? AND durum = 'Aktif' AND kalan_dk > 0`, [req.params.child_id], (err, rights) => {
+                db.all(`SELECT * FROM rights WHERE child_id = ? AND (durum = 'Aktif' OR durum = 'Süresi Doldu') AND kalan_dk > 0`, [req.params.child_id], (err, rights) => {
                     let telafiMinutes = 0, packageMinutes = 0, telafiDersiCount = 0;
                     (rights || []).forEach(r => { 
                         if (r.hak_tipi === 'TELAFİ') telafiMinutes += r.kalan_dk; 
@@ -1108,7 +1112,7 @@ app.get('/api/inside', (req, res) => {
             const placeholders = ids.map(() => '?').join(', ');
             db.all(`SELECT child_id,
                            SUM(CASE WHEN hak_tipi = 'TELAFİ' AND durum = 'Aktif' AND kalan_dk > 0 THEN kalan_dk ELSE 0 END) AS telafi_minutes,
-                           SUM(CASE WHEN hak_tipi = 'PAKET'  AND durum = 'Aktif' AND kalan_dk > 0 THEN kalan_dk ELSE 0 END) AS package_minutes
+                           SUM(CASE WHEN hak_tipi = 'PAKET'  AND (durum = 'Aktif' OR durum = 'Süresi Doldu') AND kalan_dk > 0 THEN kalan_dk ELSE 0 END) AS package_minutes
                     FROM rights WHERE child_id IN (${placeholders}) GROUP BY child_id`, ids, (err2, sums) => {
                 const byChild = {};
                 (sums || []).forEach(s => { byChild[s.child_id] = s; });
@@ -1198,7 +1202,7 @@ app.get('/api/exit/preview/:child_id', (req, res) => {
         const totalPause = (log.total_pause_duration || 0) + currentPauseDk;
         const sureDk = Math.max(1, Math.ceil((now - new Date(log.entry_time)) / 60000) - totalPause);
         
-        db.all(`SELECT * FROM rights WHERE child_id = ? AND durum = 'Aktif' AND kalan_dk > 0`, [req.params.child_id], (err, rights) => {
+        db.all(`SELECT * FROM rights WHERE child_id = ? AND (durum = 'Aktif' OR durum = 'Süresi Doldu') AND kalan_dk > 0`, [req.params.child_id], (err, rights) => {
             let telafiMinutes = 0, packageMinutes = 0;
             (rights || []).forEach(r => { 
                 if (r.hak_tipi === 'TELAFİ') telafiMinutes += r.kalan_dk; 
@@ -1250,7 +1254,7 @@ app.post('/api/exit/finalize', async (req, res) => {
                 fee = 0;
                 sourceSummary = pakettenDusen + ' Dk Telafi';
             } else if (payment_type === 'PAKET') {
-                const rights = await dbAll(`SELECT * FROM rights WHERE child_id = ? AND durum = 'Aktif' AND kalan_dk > 0 AND hak_tipi = 'PAKET' ORDER BY tanim_tarihi ASC`, [child_id]);
+                const rights = await dbAll(`SELECT * FROM rights WHERE child_id = ? AND (durum = 'Aktif' OR durum = 'Süresi Doldu') AND kalan_dk > 0 AND hak_tipi = 'PAKET' ORDER BY tanim_tarihi ASC`, [child_id]);
                 let totalAvailableTL = 0;
                 rights.forEach(r => { totalAvailableTL += r.kalan_dk; });
                 if (totalAvailableTL < fee) throw new Error("Yeterli paket bakiyesi (TL) yok.");
@@ -1999,7 +2003,7 @@ app.get('/api/students/statement/:child_id', async (req, res) => {
                                           COALESCE(SUM(miktar_dk), 0) AS ilk,
                                           COALESCE(SUM(kalan_ana_para), 0) AS ana,
                                           COALESCE(SUM(kalan_bonus), 0) AS bonus
-                                   FROM rights WHERE child_id = ? AND hak_tipi = 'PAKET' AND durum = 'Aktif'`, [child_id]);
+                                   FROM rights WHERE child_id = ? AND hak_tipi = 'PAKET' AND (durum = 'Aktif' OR durum = 'Süresi Doldu')`, [child_id]);
         const telafi = await dbGet(`SELECT COALESCE(SUM(kalan_dk), 0) AS kalan_dk
                                     FROM rights WHERE child_id = ? AND hak_tipi = 'TELAFİ' AND durum = 'Aktif'`, [child_id]);
 

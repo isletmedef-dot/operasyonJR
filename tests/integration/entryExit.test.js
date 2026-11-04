@@ -485,7 +485,13 @@ describe('expiry engine', () => {
         expect(lessons[0].kaynak).toBe('Süresi Dolan Oyun Alanı Telafisi Dönüşümü');
     });
 
-    test('still expires packages, not only makeup minutes', async () => {
+    test('paket son kullanma tarihi geçse de bakiye durur ve harcanabilir', async () => {
+        // DAVRANIŞ DEĞİŞİKLİĞİ: paket bakiyesi ÖN ÖDEMELİ PARADIR.
+        // Eskiden son_kullanma geçince hak 'Süresi Doldu' oluyordu. Bakiye silinmiyordu ama
+        // (a) profil ucu taramayı çalıştırdığı ve çıkış popup'ı çalıştırmadığı için iki ekran
+        // çelişiyordu (profil 0, popup gerçek bakiye) ve (b) paket çıkışta ödeme yapamıyordu,
+        // yani aile ödediği parayı harcayamıyordu. Artık süre taraması PAKET'e dokunmaz;
+        // oyun alanı telafisinin süresi dolmaya ve derse dönüşmeye devam eder.
         const id = await createStudent({ student_name: 'Paket SKT' });
         const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
         await run(dbi,
@@ -496,13 +502,13 @@ describe('expiry engine', () => {
         await agent.get(`/api/students/get/${id}`);
 
         const row = await get(dbi, 'SELECT * FROM rights WHERE hak_id = ?', ['PAK-EXPIRED-1']);
-        expect(row.durum).toBe('Süresi Doldu');
-        expect(row.kalan_dk).toBe(500); // only the status changes for packages
+        expect(row.durum).toBe('Aktif');          // tarama pakete dokunmaz
+        expect(row.kalan_dk).toBe(500);
 
-        // and an expired package can no longer pay for a checkout
+        // ve bakiyesi olan paket parası harcanabilir kalır
         await openSession(id, 20);
         const res = await agent.post('/api/exit/finalize').send({ child_id: id, payment_type: 'PAKET' });
-        expect(res.body.success).toBe(false);
+        expect(res.body.success).toBe(true);
     });
 
     test('finishes a conversion that a crash left half-done', async () => {
