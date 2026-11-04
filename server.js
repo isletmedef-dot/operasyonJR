@@ -12,6 +12,7 @@ const fs = require('fs');
 const ptp = require('pdf-to-printer');
 const sheetsLib = require('./lib/sheets');
 const auth = require('./lib/auth');
+const nakitPaketDuzeltmesi = require('./lib/nakit-paket-duzeltmesi');
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
@@ -2752,6 +2753,13 @@ if (require.main === module) {
     scheduleClassJobs();
     scheduleSheetsSync();
 
+    // Tek seferlik veri düzeltmesi: paket bakiyesi görünmediği dönemde kasadan nakit
+    // alınmış ziyaretleri "paketten karşılandı" hâline getirir ve bakiyeden düşer.
+    // Kendi kendini tekrarlamaz (settings'e sürüm işareti yazar) ve bakiye eksiye düşmez.
+    // Açılışı bloke etmemesi için beklenmez; yalnızca hata olursa uyarı basılır.
+    nakitPaketDuzeltmesi.uygula({ dbGet, dbAll, dbRun, withTransaction, dbPath: DATABASE_PATH })
+        .catch((e) => console.warn('[nakit-paket] düzeltme uygulanamadı: ' + (e && e.message)));
+
     // Kasiyer arayüzü
     app.listen(PORT, '0.0.0.0', () => {
         console.log(`Üreten Çocuk KASA arayüzü: http://localhost:${PORT}`);
@@ -2788,6 +2796,8 @@ module.exports = {
     // yazma katmanı (testler için)
     withWriteLock,
     withTransaction,
+    // tek seferlik veri düzeltmesi (testler için)
+    nakitPaketDuzeltmesi,
     drainWrites,
     dbRun,
     dbGet,
