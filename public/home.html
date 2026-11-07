@@ -128,6 +128,13 @@ body{font-family:Arial, sans-serif; background:#f4f4f4;margin:0; padding: 24px;c
     </div>
     
     <div id="adminStudents" class="admin-form" style="display:none;">
+      <div style="background:#eff6ff; border:2px solid #bfdbfe; border-radius:10px; padding:12px; margin-bottom:14px;">
+        <button id="tumDokumBtn" class="btn" onclick="tumDokumleriYazdir()" style="background:#dbeafe; border:2px solid #93c5fd; text-align:left; width:100%;">
+          TÜM DÖKÜMLER — TERMAL YAZDIR (80 mm)
+          <small>Tüm öğrencilerin hareket dökümünü tek seferde yazdırır (her öğrenci ayrı fiş)</small>
+        </button>
+        <div id="tumDokumDurum" style="font-size:13px; color:#374151; margin-top:8px;"></div>
+      </div>
       <input id="adminSearch" placeholder="Öğrenci Ara (İsim, ID, Telefon, RFID)" autocomplete="off" onkeyup="searchAdminStudent()">
       <div id="adminSearchResults" style="max-height: 160px; overflow-y:auto; background:#f9fafb; margin-top:10px;"></div>
       <div id="adminEditForm" style="display:none; margin-top: 15px; border-top:2px solid #eee; padding-top:15px;">
@@ -551,6 +558,7 @@ function deleteAdminStudent() {
     }).catch(err => alert("Hata: " + err.message));
 }
 </script>
+  <script src="/dokum-termal.js"></script>
   <script src="/oturum.js"></script>
 </body>
 </html>
