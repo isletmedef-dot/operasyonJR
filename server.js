@@ -13,6 +13,7 @@ const ptp = require('pdf-to-printer');
 const sheetsLib = require('./lib/sheets');
 const auth = require('./lib/auth');
 const nakitPaketDuzeltmesi = require('./lib/nakit-paket-duzeltmesi');
+const dokumDuzeltmesi = require('./lib/dokum-duzeltmesi');
 
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
@@ -2760,6 +2761,12 @@ if (require.main === module) {
     nakitPaketDuzeltmesi.uygula({ dbGet, dbAll, dbRun, withTransaction, dbPath: DATABASE_PATH })
         .catch((e) => console.warn('[nakit-paket] düzeltme uygulanamadı: ' + (e && e.message)));
 
+    // 2. aşama: kasadaki döküm fişlerinde "x" işaretlenen satırların düzeltmesi
+    // (yanlış ilk bakiye, silinecek kayıtlar, yanlış tutar, nakdin pakete çevrilmesi).
+    // "✓" ve "?" işaretli satırlara dokunmaz. O da kendini tekrarlamaz.
+    dokumDuzeltmesi.uygula({ dbGet, dbAll, dbRun, withTransaction, dbPath: DATABASE_PATH })
+        .catch((e) => console.warn('[dokum] düzeltme uygulanamadı: ' + (e && e.message)));
+
     // Kasiyer arayüzü
     app.listen(PORT, '0.0.0.0', () => {
         console.log(`Üreten Çocuk KASA arayüzü: http://localhost:${PORT}`);
@@ -2798,6 +2805,7 @@ module.exports = {
     withTransaction,
     // tek seferlik veri düzeltmesi (testler için)
     nakitPaketDuzeltmesi,
+    dokumDuzeltmesi,
     drainWrites,
     dbRun,
     dbGet,
