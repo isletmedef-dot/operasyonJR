@@ -61,9 +61,10 @@ describe('sendServerPrint() — 80mm thermal receipt', () => {
         expect(html).toContain('<meta charset="utf-8">');
         expect(html).toContain('size: 80mm auto');
         // Genişliği artık sayfanın basılabilir alanı belirler; sabit 80mm, kenar
-        // boşluğu eklenince sayfadan taşıyordu.
+        // boşluğu eklenince sayfadan taşıyordu. Kenar boşluğu yalnızca YANDIR:
+        // dikey dolgu, fişin tepesinde boş alan bırakıyordu.
         expect(html).toContain('width: 100% !important');
-        expect(html).toContain('margin: 2mm 2.5mm');
+        expect(html).toContain('padding: 0 2.5mm !important');
         expect(html).toContain('@media print');
         expect(html).toContain('test satırı');
         expect(html).toMatch(/<body>\s*<h3>ÜRETEN ÇOCUK<\/h3>/);

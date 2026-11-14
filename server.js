@@ -512,25 +512,25 @@ async function sendServerPrint(slipText) {
                 <meta charset="utf-8">
                 <style>
 					/* 80 mm termal fiş.
-					   - Sayfa kenar boşluğu: yazı kenara dayanınca ilk karakterler kesiliyordu.
-					   - Satırlar SOLA hizalı: ortalanmış uzun satırlar taşınca iki yana dağınık
-					     görünüyordu ("çarpık").
-					   - Yazı boyutu, en uzun satırın (ör. "Öğrenci: <ad> (UC-000010)", ~41 karakter)
-					     75 mm'lik baskı alanına tek satırda sığacağı şekilde seçildi. */
+					   - Üstte boşluk bırakılmaz: dikey dolgu yok, metin sayfanın tepesinden başlar.
+					   - Yan boşluk body padding ile verilir (kenara dayanan yazı kesiliyordu).
+					   - Satırlar SOLA hizalı; punto, satırların bölünmeden sığacağı en büyük değere
+					     göre seçildi ("Öğrenci" ve "Kart" ayrı satırlara alındı). */
 					@page {
 					size: 80mm auto;
-					margin: 2mm 2.5mm;
+					margin: 0;
 					}
 
 					html, body {
 					margin: 0 !important;
 					padding: 0 !important;
-					width: 100% !important;      /* genişliği sayfanın basılabilir alanı belirler */
+					width: 100% !important;
 					}
 
 					body {
+					padding: 0 2.5mm !important;   /* yalnızca yan boşluk */
 					font-family: Arial, Helvetica, sans-serif;
-					font-size: 11px;
+					font-size: 16px;
 					font-weight: bold;
 					line-height: 1.45;
 					color: #000;
@@ -538,32 +538,37 @@ async function sendServerPrint(slipText) {
 					}
 
 					h3 {
-					font-size: 18px;
+					font-size: 26px;
 					letter-spacing: 0.5px;
-					margin: 0 0 3px 0 !important;
+					margin: 0 0 4px 0 !important;
 					padding: 0 !important;
 					text-align: center;
 					}
 
-					/* Alt başlık ("Giriş/Çıkış İşlemi") şablonda satır içi stille ortalanır; */
-					/* buradaki kural fişin asıl satırlarını sola hizalar. */
 					p {
-					margin: 1px 0 !important;
+					margin: 2px 0 !important;
 					padding: 0 !important;
-					font-size: 11px;
+					font-size: 16px;
 					text-align: left;
+					}
+
+					/* Fiş altındaki açıklama (ör. "(Paketten Karşılandı)") */
+					.nt {
+					text-align: center !important;
+					font-size: 15px;
+					margin: 2px 0 0 0 !important;
 					}
 
 					hr {
 					border: 0;
 					border-top: 1px dashed #000;
-					margin: 5px 0 !important;
+					margin: 6px 0 !important;
 					}
 
 					@media print {
 					@page {
 					size: 80mm auto;
-					margin: 2mm 2.5mm;
+					margin: 0;
 					}
 
 					html, body {
@@ -1079,7 +1084,8 @@ app.post('/api/students/create', async (req, res) => {
                 <p style="text-align:center;">Giriş İşlemi</p>
                 <hr style="border:1px dashed #000;">
                 <p><b>Tarih:</b> ${new Date().toLocaleString('tr-TR')}</p>
-                <p><b>Öğrenci:</b> ${student_name} (${created.childId})</p>
+                <p><b>Öğrenci:</b> ${student_name}</p>
+                <p><b>Kart:</b> ${created.childId}</p>
                 <p><b>Veli Tel:</b> ${parent_phone}</p>
                 <p><b>Personel:</b> ${personel || 'Sistem'}</p>
             `);
@@ -1214,7 +1220,8 @@ app.post('/api/entry/start', async (req, res) => {
             <p style="text-align:center;">Giriş İşlemi</p>
             <hr style="border:1px dashed #000;">
             <p><b>Tarih:</b> ${new Date().toLocaleString('tr-TR')}</p>
-            <p><b>Öğrenci:</b> ${student.student_name} (${student.child_id})</p>
+            <p><b>Öğrenci:</b> ${student.student_name}</p>
+            <p><b>Kart:</b> ${student.child_id}</p>
             <p><b>Veli Tel:</b> ${student.parent_phone}</p>
             <p><b>Personel:</b> ${personel || 'Sistem'}</p>
         `);
@@ -1362,10 +1369,12 @@ app.post('/api/exit/finalize', async (req, res) => {
     }
 
     // Fiş, işlem KESİNLEŞTİKTEN sonra yazdırılır: yazıcı sorunu çıkışı geri almaz.
-    const sureTutar = outcome.payment_type === 'HAK' ? `${outcome.sure_dk} Dk / 0 TL`
-        : outcome.payment_type === 'PAKET' ? `${outcome.sure_dk} Dk / 0 TL (Paketten Karşılandı)`
-        : outcome.payment_type === IPTAL_TIPI ? `${outcome.sure_dk} Dk / 0 TL (İptal Edildi)`
+    const sureTutar = (outcome.payment_type === 'HAK' || outcome.payment_type === 'PAKET'
+        || outcome.payment_type === IPTAL_TIPI) ? `${outcome.sure_dk} Dk / 0 TL`
         : `${outcome.sure_dk} Dk / ${outcome.fee} TL`;
+    // Aciklama ayri satirda gosterilir (deger sutununa sigmiyordu).
+    const sureNot = outcome.payment_type === 'PAKET' ? '(Paketten Karşılandı)'
+        : outcome.payment_type === IPTAL_TIPI ? '(İptal Edildi)' : '';
     const odemeTipi = outcome.payment_type === 'HAK' ? 'HAK (Telafi)'
         : outcome.payment_type === IPTAL_TIPI ? 'İPTAL' : outcome.payment_type;
     await sendServerPrint(`
@@ -1373,14 +1382,16 @@ app.post('/api/exit/finalize', async (req, res) => {
         <p style="text-align:center;">Çıkış İşlemi</p>
         <hr style="border:1px dashed #000;">
         <p><b>Tarih:</b> ${now.toLocaleString('tr-TR')}</p>
-        <p><b>Öğrenci:</b> ${outcome.student_name} (${outcome.child_id})</p>
+        <p><b>Öğrenci:</b> ${outcome.student_name}</p>
+        <p><b>Kart:</b> ${outcome.child_id}</p>
         <p><b>Süre / Tutar:</b> ${sureTutar}</p>
+        ${sureNot ? `<p class="nt">${sureNot}</p>` : ''}
         <p><b>Ödeme Tipi:</b> ${odemeTipi}</p>
         <p><b>Personel:</b> ${personel || 'Sistem'}</p>
         <hr style="border:1px dashed #000;">
         ${outcome.kullanilanPuan > 0 ? `<p><b>Kullanılan Puan:</b> ${outcome.kullanilanPuan} (-${outcome.puanIndirimi} TL)</p>` : ''}
         <p><b>Kazanılan Puan:</b> ${outcome.kazanilanPuan}</p>
-        <p><b>Mevcut Cüzdan Bakiyesi:</b> ${outcome.cuzdan} puan</p>
+        <p><b>Cüzdan Bakiyesi:</b> ${outcome.cuzdan} puan</p>
     `);
     res.json({ success: true, message: "Çıkış başarılı." });
 });
@@ -1393,13 +1404,14 @@ app.post('/api/print/status', async (req, res) => {
         <h3>ÜRETEN ÇOCUK</h3>
         <p style="text-align:center;">Anlık Durum Fişi</p>
         <hr style="border:1px dashed #000;">
-        <p><b>Öğrenci:</b> ${student_name} (${child_id})</p>
+        <p><b>Öğrenci:</b> ${student_name}</p>
+        <p><b>Kart:</b> ${child_id}</p>
         <p><b>Veli Tel:</b> ${parent_phone}</p>
         <p><b>Giriş Saati:</b> ${entry_time_fmt}</p>
         <p><b>İçerideki Süre:</b> ${sure_dk} dakika</p>
         <p><b>Güncel Tutar:</b> <b>${estimated_fee} TL</b></p>
         <hr style="border:1px dashed #000;">
-        <p><b>Mevcut Cüzdan Bakiyesi:</b> ${cuzdanBakiye} puan</p>
+        <p><b>Cüzdan Bakiyesi:</b> ${cuzdanBakiye} puan</p>
     `);
     res.json({ success: true });
 });
