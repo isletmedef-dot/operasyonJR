@@ -19,7 +19,17 @@ const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const DATABASE_PATH = process.env.DB_PATH || path.join(__dirname, 'database.db');
 const PRINTER_NAME = process.env.PRINTER_NAME || 'KASA';
-const PRINT_COPIES = process.env.PRINT_COPIES ? Number(process.env.PRINT_COPIES) : 2;
+// Fiş kopya sayısı. Öncelik: PRINT_COPIES ortam değişkeni > yönetici panelindeki
+// 'fis_kopya' ayarı > 1. Eskiden sabit 2 idi ve her giriş/çıkışta İKİ fiş basılıyordu;
+// artık varsayılan tek fiş, istenirse panelden artırılabilir.
+const PRINT_COPIES_ENV = process.env.PRINT_COPIES ? Number(process.env.PRINT_COPIES) : null;
+function fisKopyaSayisi() {
+    const env = Number(PRINT_COPIES_ENV);
+    if (Number.isFinite(env) && env > 0) return Math.min(10, Math.floor(env));
+    const ayar = Number(appSettings.fis_kopya);
+    if (Number.isFinite(ayar) && ayar > 0) return Math.min(10, Math.floor(ayar));
+    return 1;
+}
 const SLIP_TMP_DIR = process.env.SLIP_TMP_DIR || __dirname;
 
 const https = require('https');
@@ -102,7 +112,12 @@ const SETTING_DEFAULTS = {
     // --- Oturum davranışı ---
     // 0: oturum açan personel adına işlem yazılır (girişten sonra PIN tekrar sorulmaz).
     // 1: eski davranış — her yetki gerektiren işlemde tekrar PIN sorulur.
-    tekrar_pin_sor: 0
+    tekrar_pin_sor: 0,
+
+    // --- Fiş yazdırma ---
+    // Giriş/çıkış fişinin kaç kopya basılacağı. Sabit 2 idi ve her işlemde iki fiş
+    // çıkıyordu; varsayılan 1'e çekildi, panelden değiştirilebilir.
+    fis_kopya: 1
 };
 // Bunların varsayılanı veritabanına yazılmaz, sadece okunur.
 const SETTING_OPTIONAL = [
@@ -556,7 +571,7 @@ async function sendServerPrint(slipText) {
         
         const options = {
             printer: PRINTER_NAME,
-            copies: PRINT_COPIES
+            copies: fisKopyaSayisi()
         };
 
         await ptp.print(tempHtmlPath, options);
@@ -2795,7 +2810,7 @@ module.exports = {
     DATABASE_PATH,
     PORT,
     PRINTER_NAME,
-    PRINT_COPIES,
+    fisKopyaSayisi,
     SLIP_TMP_DIR,
     appSettings,
     calculateFee,

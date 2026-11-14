@@ -16,7 +16,7 @@ process.env.DB_PATH = DB_PATH;
 process.env.SLIP_TMP_DIR = SLIP_DIR;
 
 const ptp = require('pdf-to-printer');
-const { db, sendServerPrint, PRINTER_NAME, PRINT_COPIES, SLIP_TMP_DIR , drainWrites} = require('../../server.js');
+const { db, sendServerPrint, PRINTER_NAME, fisKopyaSayisi, appSettings, SLIP_TMP_DIR , drainWrites} = require('../../server.js');
 
 // let the boot migrations finish before we close the handle in afterAll
 beforeAll(async () => { await waitForSchema(DB_PATH); });
@@ -29,8 +29,21 @@ afterAll(async () => {
 describe('sendServerPrint() — 80mm thermal receipt', () => {
     test('exports the production printer settings', () => {
         expect(PRINTER_NAME).toBe('KASA');
-        expect(PRINT_COPIES).toBe(2);
         expect(SLIP_TMP_DIR).toBe(SLIP_DIR);
+    });
+
+    // Bir giriş/çıkış işlemi TEK fiş basmalıdır. Eskiden sabit 2 idi ve her işlemde iki
+    // fiş çıkıyordu; varsayılan 1'e çekildi, istenirse panelden artırılabilir.
+    test('varsayılan olarak tek fiş basılır, ayarla artırılabilir', () => {
+        expect(fisKopyaSayisi()).toBe(1);
+
+        appSettings.fis_kopya = 3;
+        expect(fisKopyaSayisi()).toBe(3);
+
+        appSettings.fis_kopya = 0;          // geçersiz değer -> güvenli varsayılana döner
+        expect(fisKopyaSayisi()).toBe(1);
+
+        appSettings.fis_kopya = 1;
     });
 
     test('wraps the slip in an 80mm print document and sends it to the KASA printer', async () => {
@@ -39,7 +52,7 @@ describe('sendServerPrint() — 80mm thermal receipt', () => {
         expect(ptp.print).toHaveBeenCalledTimes(1);
         const [filePath, options] = ptp.print.mock.calls[0];
 
-        expect(options).toEqual({ printer: 'KASA', copies: 2 });
+        expect(options).toEqual({ printer: 'KASA', copies: 1 });
         expect(path.dirname(filePath)).toBe(SLIP_DIR);
         expect(path.basename(filePath)).toMatch(/^temp_slip_\d+\.html$/);
 

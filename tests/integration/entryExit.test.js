@@ -96,7 +96,9 @@ describe('check-in', () => {
         expect(log.tarih).toBe(new Date().toISOString().split('T')[0]);
 
         const slip = lastSlip();
-        expect(slip.options).toEqual({ printer: 'KASA', copies: 2 });
+        // Tek fiş: kopya sayısı artık yönetici panelindeki 'fis_kopya' ayarından gelir,
+        // varsayılanı 1'dir (eskiden sabit 2 idi ve her işlemde iki fiş çıkıyordu).
+        expect(slip.options).toEqual({ printer: 'KASA', copies: 1 });
         expect(slip.html).toContain('Giriş İşlemi');
         expect(slip.html).toContain('ÜRETEN ÇOCUK');
         expect(slip.html).toContain('Giren Çocuk');
@@ -452,7 +454,9 @@ describe('receipt printing — status slip', () => {
         expect(res.body.success).toBe(true);
 
         const slip = lastSlip();
-        expect(slip.options).toEqual({ printer: 'KASA', copies: 2 });
+        // Tek fiş: kopya sayısı artık yönetici panelindeki 'fis_kopya' ayarından gelir,
+        // varsayılanı 1'dir (eskiden sabit 2 idi ve her işlemde iki fiş çıkıyordu).
+        expect(slip.options).toEqual({ printer: 'KASA', copies: 1 });
         expect(slip.html).toContain('Anlık Durum Fişi');
         expect(slip.html).toContain('Fiş Çocuk');
         expect(slip.html).toContain('UC-000123');

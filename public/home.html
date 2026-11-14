@@ -66,6 +66,8 @@ body{font-family:Arial, sans-serif; background:#f4f4f4;margin:0; padding: 24px;c
       <input type="number" id="packageExpiryDaysInput" value="30">
       <label>Çıkış Toleransı (Dakika)</label>
       <input type="number" id="exitToleranceInput" value="5">
+      <label>Fiş Kopya Sayısı (1 = her işlemde tek fiş)</label>
+      <input type="number" min="1" max="10" id="fisKopyaInput" value="1">
       <label>Puan Değeri (1 puan kaç TL indirim)</label>
       <input type="number" step="0.01" min="0" id="pointTlRateInput" value="1">
       <label>Ders Gelmemesi Telafisi (dakika)</label>
@@ -286,6 +288,7 @@ function openAdmin() {
   fetch('/api/settings').then(res => res.json()).then(r => {
     if (r.success){
       document.getElementById('baseRateInput').value = r.settings.base_rate;
+      document.getElementById('fisKopyaInput').value = r.settings.fis_kopya || 1;
       document.getElementById('hourlyRateInput').value = r.settings.hourly_rate;
       document.getElementById('extraRateInput').value = r.settings.extra_rate;
       document.getElementById('telafiExpiryDaysInput').value = r.settings.telafi_expiry_days || 30;
@@ -349,6 +352,7 @@ function saveSettings() {
         telafi_expiry_days: document.getElementById('telafiExpiryDaysInput').value,
         package_expiry_days: document.getElementById('packageExpiryDaysInput').value,
         exit_tolerance_minutes: document.getElementById('exitToleranceInput').value,
+        fis_kopya: document.getElementById('fisKopyaInput').value,
         telegram_token: document.getElementById('telegramTokenInput').value,
         telegram_chat_id: document.getElementById('telegramChatIdInput').value,
         point_tl_rate: document.getElementById('pointTlRateInput').value,
