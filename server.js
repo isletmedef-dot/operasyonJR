@@ -511,46 +511,59 @@ async function sendServerPrint(slipText) {
             <head>
                 <meta charset="utf-8">
                 <style>
+					/* 80 mm termal fiş.
+					   - Sayfa kenar boşluğu: yazı kenara dayanınca ilk karakterler kesiliyordu.
+					   - Satırlar SOLA hizalı: ortalanmış uzun satırlar taşınca iki yana dağınık
+					     görünüyordu ("çarpık").
+					   - Yazı boyutu, en uzun satırın (ör. "Öğrenci: <ad> (UC-000010)", ~41 karakter)
+					     75 mm'lik baskı alanına tek satırda sığacağı şekilde seçildi. */
 					@page {
 					size: 80mm auto;
-					margin: 0 !important;
+					margin: 2mm 2.5mm;
 					}
 
 					html, body {
 					margin: 0 !important;
 					padding: 0 !important;
-					width: 80mm !important;
+					width: 100% !important;      /* genişliği sayfanın basılabilir alanı belirler */
 					}
 
 					body {
-					font-family: Arial, sans-serif;
-					font-size: 24px;
+					font-family: Arial, Helvetica, sans-serif;
+					font-size: 11px;
 					font-weight: bold;
-					line-height: 1.7;
+					line-height: 1.45;
+					color: #000;
+					word-wrap: break-word;
 					}
 
 					h3 {
-					font-size: 22px;
+					font-size: 18px;
+					letter-spacing: 0.5px;
 					margin: 0 0 3px 0 !important;
 					padding: 0 !important;
 					text-align: center;
 					}
 
+					/* Alt başlık ("Giriş/Çıkış İşlemi") şablonda satır içi stille ortalanır; */
+					/* buradaki kural fişin asıl satırlarını sola hizalar. */
 					p {
 					margin: 1px 0 !important;
 					padding: 0 !important;
-					font-size: 18px;
-					text-align: center;
+					font-size: 11px;
+					text-align: left;
 					}
 
 					hr {
-					margin: 2px 0 !important;
+					border: 0;
+					border-top: 1px dashed #000;
+					margin: 5px 0 !important;
 					}
 
 					@media print {
 					@page {
 					size: 80mm auto;
-					margin: 0 !important;
+					margin: 2mm 2.5mm;
 					}
 
 					html, body {
