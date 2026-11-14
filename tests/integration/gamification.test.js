@@ -295,7 +295,9 @@ describe('points on the checkout receipt', () => {
         const html = lastSlip();
         expect(html).toContain('Kullanılan Puan:</b> 20');
         expect(html).toContain('Kazanılan Puan:</b> 0');
-        expect(html).toContain('Mevcut Cüzdan Bakiyesi:</b> 180 puan');
+        // Etiket "Mevcut Cüzdan Bakiyesi" -> "Cüzdan Bakiyesi": 16px puntoda uzun hâli
+        // 80 mm'lik baskı alanına tek satırda sığmıyordu.
+        expect(html).toContain('Cüzdan Bakiyesi:</b> 180 puan');
     });
 
     test('awarding points at checkout raises the balance and shows on the receipt', async () => {
@@ -310,7 +312,7 @@ describe('points on the checkout receipt', () => {
 
         const html = lastSlip();
         expect(html).toContain('Kazanılan Puan:</b> 15');
-        expect(html).toContain('Mevcut Cüzdan Bakiyesi:</b> 15 puan');
+        expect(html).toContain('Cüzdan Bakiyesi:</b> 15 puan');
     });
 
     test('redemption is capped by the balance', async () => {
@@ -363,7 +365,7 @@ describe('points on the checkout receipt', () => {
             entry_time_fmt: '14:05', sure_dk: 42, estimated_fee: 500,
         });
         expect(res.body.success).toBe(true);
-        expect(lastSlip()).toContain('Mevcut Cüzdan Bakiyesi:</b> 7 puan');
+        expect(lastSlip()).toContain('Cüzdan Bakiyesi:</b> 7 puan');
     });
 
     test('a checkout with no points leaves the ledger untouched', async () => {
