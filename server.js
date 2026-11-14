@@ -499,7 +499,6 @@ async function sendServerPrint(slipText) {
 					@page {
 					size: 80mm auto;
 					margin: 0 !important;
-					margin-left: 100 !important;
 					}
 
 					html, body {
@@ -510,23 +509,27 @@ async function sendServerPrint(slipText) {
 
 					body {
 					font-family: Arial, sans-serif;
-					font-size: 26px;
+					font-size: 24px;
 					font-weight: bold;
-					line-height: 2.2;
+					line-height: 1.7;
 					}
 
 					h3 {
-					font-size: 26px;
-					margin: 0 0 4px 0 !important;
+					font-size: 22px;
+					margin: 0 0 3px 0 !important;
 					padding: 0 !important;
 					text-align: center;
 					}
 
 					p {
-					margin: 2px 0 !important;
+					margin: 1px 0 !important;
 					padding: 0 !important;
-					font-size: 20px;
+					font-size: 18px;
 					text-align: center;
+					}
+
+					hr {
+					margin: 2px 0 !important;
 					}
 
 					@media print {
